@@ -35,6 +35,8 @@ class DBService:
                     goal,
                     role_cluster,
                     current_level,
+                    summary,
+                    recommended_next_move,
                     market_min_lpa,
                     market_max_lpa,
                     salary_gap_lpa,
@@ -43,13 +45,14 @@ class DBService:
                     top_skill_gaps,
                     skill_salary_impact,
                     roadmap_4_weeks,
-                    resume_suggestions
+                    resume_suggestions,
+                    confidence_notes
                 )
                 values (
                     %s, %s, %s, %s, %s, %s,
-                    %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s
                 )
             """
 
@@ -65,6 +68,8 @@ class DBService:
 
                     response.role_cluster,
                     response.current_level,
+                    response.summary,
+                    response.recommended_next_move,
 
                     response.salary_insight.market_min_lpa,
                     response.salary_insight.market_max_lpa,
@@ -76,6 +81,7 @@ class DBService:
                     json.dumps(response.skill_salary_impact),
                     json.dumps(response.roadmap_4_weeks),
                     json.dumps(response.resume_suggestions),
+                    json.dumps(response.confidence_notes),
                 )
             )
 

@@ -22,10 +22,13 @@ class SalaryInsight(BaseModel):
 class CareerAnalysisResponse(BaseModel):
     role_cluster: str
     current_level: str
+    summary: str
+    recommended_next_move: str
     salary_insight: SalaryInsight
     target_roles: List[str]
     top_skill_gaps: List[str]
     skill_salary_impact: Dict[str, str]
     roadmap_4_weeks: Dict[str, List[str]]
     resume_suggestions: List[str]
+    confidence_notes: List[str]
     disclaimer: str

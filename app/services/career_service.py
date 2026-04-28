@@ -29,12 +29,15 @@ class CareerService:
         response = CareerAnalysisResponse(
             role_cluster=role_cluster,
             current_level=ai_result["current_level"],
+            summary=ai_result["summary"],
+            recommended_next_move=ai_result["recommended_next_move"],
             salary_insight=salary,
             target_roles=ai_result["target_roles"],
             top_skill_gaps=ai_result["top_skill_gaps"],
             skill_salary_impact=ai_result["skill_salary_impact"],
             roadmap_4_weeks=ai_result["roadmap_4_weeks"],
             resume_suggestions=ai_result["resume_suggestions"],
+            confidence_notes=ai_result["confidence_notes"],
             disclaimer="This is an AI-assisted estimate based on your profile and market patterns. It is not a guaranteed salary prediction."
         )
 
