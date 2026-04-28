@@ -4,7 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.models import CareerProfileRequest, CareerAnalysisResponse
 from app.services.career_service import CareerService
 
-allow_origins=["*"]
 app = FastAPI(
     title="Career AI MVP",
     description="AI-powered career and income growth engine",
@@ -16,7 +15,7 @@ app.add_middleware(
     allow_origins=["*"],  # tighten later for production
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
 career_service = CareerService()

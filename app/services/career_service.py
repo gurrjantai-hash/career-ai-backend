@@ -1,7 +1,10 @@
+from urllib import response
+
 from app.models import CareerProfileRequest, CareerAnalysisResponse
 from app.services.ai_service import AIService
 from app.services.salary_service import SalaryService
 from app.prompts.career_prompts import career_analysis_prompt
+from app.services.db_service import DBService
 
 
 class CareerService:
@@ -9,6 +12,7 @@ class CareerService:
     def __init__(self):
         self.ai_service = AIService()
         self.salary_service = SalaryService()
+        self.db_service = DBService()
 
     def analyze(self, profile: CareerProfileRequest) -> CareerAnalysisResponse:
         role_cluster = self.ai_service.classify_role_cluster(
@@ -22,7 +26,7 @@ class CareerService:
 
         ai_result = self.ai_service.get_json_response(prompt)
 
-        return CareerAnalysisResponse(
+        response = CareerAnalysisResponse(
             role_cluster=role_cluster,
             current_level=ai_result["current_level"],
             salary_insight=salary,
@@ -33,3 +37,7 @@ class CareerService:
             resume_suggestions=ai_result["resume_suggestions"],
             disclaimer="This is an AI-assisted estimate based on your profile and market patterns. It is not a guaranteed salary prediction."
         )
+
+        self.db_service.save_career_analysis(profile, response)
+
+        return response
