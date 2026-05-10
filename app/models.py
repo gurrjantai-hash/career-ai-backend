@@ -78,4 +78,48 @@ class ResumeOptimizeResponse(BaseModel):
     naukri_headline: str
     linkedin_summary: str
     interview_positioning: List[str]
-    disclaimer: str    
+    disclaimer: str
+
+class LearningPlanRequest(BaseModel):
+    current_role: str = Field(..., example="Java Developer")
+    experience_years: float = Field(..., example=4)
+    city: str = Field(..., example="Bangalore")
+    skills: List[str] = Field(..., example=["Java", "Spring Boot", "Microservices"])
+    goal: str = Field(..., example="Switch job")
+    target_role: str = Field(..., example="Senior Backend Engineer")
+    skill_gaps: List[str] = Field(
+        default=[],
+        example=["System Design", "AWS", "Docker"]
+    )
+
+
+class ProjectSuggestion(BaseModel):
+    project_name: str
+    description: str
+    skills_covered: List[str]
+    difficulty: str
+    portfolio_value: str
+
+
+class ResourceRecommendation(BaseModel):
+    topic: str
+    resource_type: str
+    what_to_search: str
+    expected_outcome: str
+
+
+class LearningPlanResponse(BaseModel):
+    target_role: str
+    learning_goal: str
+    readiness_level: str
+    readiness_summary: str
+
+    revision_topics: List[str]
+    new_skills_to_learn: List[str]
+    project_suggestions: List[ProjectSuggestion]
+    interview_prep_topics: List[str]
+    resource_recommendations: List[ResourceRecommendation]
+    weekly_learning_plan: Dict[str, List[str]]
+    job_readiness_checklist: List[str]
+
+    disclaimer: str     
