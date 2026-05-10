@@ -50,3 +50,32 @@ class CareerAnalysisResponse(BaseModel):
     confidence_notes: List[str]
 
     disclaimer: str
+
+class ResumeOptimizeRequest(BaseModel):
+    current_role: str = Field(..., example="Java Developer")
+    experience_years: float = Field(..., example=4)
+    city: str = Field(..., example="Bangalore")
+    skills: List[str] = Field(..., example=["Java", "Spring Boot", "Microservices"])
+    goal: str = Field(..., example="Switch job")
+    target_role: str = Field(..., example="Senior Backend Engineer")
+    resume_text: str = Field(..., example="Paste resume text here")
+
+
+class ResumeBulletImprovement(BaseModel):
+    original: str
+    improved: str
+    reason: str
+
+
+class ResumeOptimizeResponse(BaseModel):
+    target_role: str
+    resume_alignment: str
+    alignment_summary: str
+    improved_profile_summary: str
+    improved_bullets: List[ResumeBulletImprovement]
+    missing_keywords: List[str]
+    resume_improvement_priorities: List[str]
+    naukri_headline: str
+    linkedin_summary: str
+    interview_positioning: List[str]
+    disclaimer: str    
