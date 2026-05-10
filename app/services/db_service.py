@@ -2,6 +2,7 @@ import os
 import json
 import psycopg2
 from dotenv import load_dotenv
+from fastapi.encoders import jsonable_encoder
 
 from app.models import CareerProfileRequest, CareerAnalysisResponse
 
@@ -37,6 +38,7 @@ class DBService:
                     current_level,
                     summary,
                     recommended_next_move,
+                    goal_strategy,
                     market_min_lpa,
                     market_max_lpa,
                     salary_gap_lpa,
@@ -44,15 +46,18 @@ class DBService:
                     target_roles,
                     top_skill_gaps,
                     skill_salary_impact,
+                    growth_paths,
+                    why_recommendations,
                     roadmap_4_weeks,
                     resume_suggestions,
                     confidence_notes
                 )
                 values (
                     %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s
                 )
             """
 
@@ -70,18 +75,21 @@ class DBService:
                     response.current_level,
                     response.summary,
                     response.recommended_next_move,
+                    response.goal_strategy,
 
                     response.salary_insight.market_min_lpa,
                     response.salary_insight.market_max_lpa,
                     response.salary_insight.salary_gap_lpa,
                     response.salary_insight.confidence,
 
-                    json.dumps(response.target_roles),
-                    json.dumps(response.top_skill_gaps),
-                    json.dumps(response.skill_salary_impact),
-                    json.dumps(response.roadmap_4_weeks),
-                    json.dumps(response.resume_suggestions),
-                    json.dumps(response.confidence_notes),
+                    json.dumps(jsonable_encoder(response.target_roles)),
+                    json.dumps(jsonable_encoder(response.top_skill_gaps)),
+                    json.dumps(jsonable_encoder(response.skill_salary_impact)),
+                    json.dumps(jsonable_encoder(response.growth_paths)),
+                    json.dumps(jsonable_encoder(response.why_recommendations)),
+                    json.dumps(jsonable_encoder(response.roadmap_4_weeks)),
+                    json.dumps(jsonable_encoder(response.resume_suggestions)),
+                    json.dumps(jsonable_encoder(response.confidence_notes)),
                 )
             )
 

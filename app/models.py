@@ -19,16 +19,34 @@ class SalaryInsight(BaseModel):
     confidence: str
 
 
+class GrowthPath(BaseModel):
+    path_name: str
+    fit_score: str
+    why_it_fits: str
+    target_roles: List[str]
+    skills_to_build: List[str]
+
+
 class CareerAnalysisResponse(BaseModel):
     role_cluster: str
     current_level: str
+
     summary: str
     recommended_next_move: str
+    goal_strategy: str
+
     salary_insight: SalaryInsight
+
     target_roles: List[str]
     top_skill_gaps: List[str]
     skill_salary_impact: Dict[str, str]
+
+    growth_paths: List[GrowthPath]
+    why_recommendations: List[str]
+
     roadmap_4_weeks: Dict[str, List[str]]
     resume_suggestions: List[str]
+
     confidence_notes: List[str]
+
     disclaimer: str
