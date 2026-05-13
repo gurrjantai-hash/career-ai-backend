@@ -130,8 +130,12 @@ class RoleIntelligenceResult(BaseModel):
     role_family: str
     primary_cluster: str
     secondary_clusters: List[str]
+
     matched_skills: List[str]
     missing_core_skills: List[str]
+    missing_growth_skills: List[str]
+    high_priority_missing_skills: List[str]
+
     adjacent_paths: List[str]
     confidence: str
-    match_score: float        
+    match_score: float       

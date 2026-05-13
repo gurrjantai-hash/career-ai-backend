@@ -14,9 +14,11 @@ load_dotenv()
 
 class RoleIntelligenceService:
     """
+    Phase 2A Role Intelligence Service.
+
     This service maps a user's free-text role + skills to a known canonical IT role.
 
-    It supports multiple IT career families:
+    It supports broad IT career families:
     - Software development
     - QA/testing
     - Automation testing
@@ -43,7 +45,7 @@ class RoleIntelligenceService:
         best_role = None
         best_score = 0.0
         best_matched_skills: List[str] = []
-        best_missing_core_skills: List[str] = []
+        best_missing_core_skills_from_canonical: List[str] = []
 
         for role in canonical_roles:
             score_result = self._score_role_match(profile, role)
@@ -52,21 +54,40 @@ class RoleIntelligenceService:
                 best_score = score_result["score"]
                 best_role = role
                 best_matched_skills = score_result["matched_skills"]
-                best_missing_core_skills = score_result["missing_core_skills"]
+                best_missing_core_skills_from_canonical = score_result[
+                    "missing_core_skills"
+                ]
 
         if not best_role:
             return self._fallback_result(profile)
+
+        canonical_role_name = str(best_role.get("role_name", profile.current_role))
+
+        role_skill_rows = self._load_role_skill_matrix(canonical_role_name)
+
+        skill_gap_result = self._calculate_skill_gaps_from_matrix(
+            profile=profile,
+            role_skill_rows=role_skill_rows,
+            fallback_matched_skills=best_matched_skills,
+            fallback_missing_core_skills=best_missing_core_skills_from_canonical,
+        )
 
         confidence = self._calculate_confidence(best_score)
 
         return RoleIntelligenceResult(
             input_role=profile.current_role,
-            canonical_role=str(best_role.get("role_name", profile.current_role)),
+            canonical_role=canonical_role_name,
             role_family=str(best_role.get("role_family", "General IT")),
             primary_cluster=str(best_role.get("primary_cluster", "General IT")),
             secondary_clusters=self._safe_list(best_role.get("secondary_clusters")),
-            matched_skills=best_matched_skills,
-            missing_core_skills=best_missing_core_skills,
+
+            matched_skills=skill_gap_result["matched_skills"],
+            missing_core_skills=skill_gap_result["missing_core_skills"],
+            missing_growth_skills=skill_gap_result["missing_growth_skills"],
+            high_priority_missing_skills=skill_gap_result[
+                "high_priority_missing_skills"
+            ],
+
             adjacent_paths=self._safe_list(best_role.get("adjacent_paths")),
             confidence=confidence,
             match_score=round(best_score, 2),
@@ -75,7 +96,7 @@ class RoleIntelligenceService:
     def build_prompt_context(self, result: RoleIntelligenceResult) -> str:
         """
         This context is injected into the main career analysis prompt.
-        It helps the AI produce more grounded recommendations.
+        It helps AI produce grounded and role-family-aware recommendations.
         """
 
         return f"""
@@ -87,6 +108,8 @@ ROLE INTELLIGENCE CONTEXT:
 - Secondary clusters: {result.secondary_clusters}
 - Matched skills from user profile: {result.matched_skills}
 - Missing core skills for this role: {result.missing_core_skills}
+- Missing growth skills for career progression: {result.missing_growth_skills}
+- High-priority missing skills: {result.high_priority_missing_skills}
 - Possible adjacent career paths: {result.adjacent_paths}
 - Role match confidence: {result.confidence}
 - Role match score: {result.match_score}
@@ -95,6 +118,7 @@ IMPORTANT:
 Use this role intelligence context to make recommendations more accurate.
 Do not assume every IT user is a backend developer.
 If the user is from support, QA, testing, business analysis, data, security, cloud, or infrastructure, recommend paths suitable for that role family.
+Prioritize high-priority missing skills when creating skill gaps, roadmap, learning plan direction, and resume suggestions.
 """
 
     def _load_canonical_roles(self) -> List[Dict[str, Any]]:
@@ -130,6 +154,40 @@ If the user is from support, QA, testing, business analysis, data, security, clo
 
         except Exception as e:
             print(f"Failed to load canonical roles: {e}")
+            return []
+
+    def _load_role_skill_matrix(self, role_name: str) -> List[Dict[str, Any]]:
+        if not self.database_url:
+            return []
+
+        try:
+            connection = psycopg2.connect(self.database_url)
+            cursor = connection.cursor(cursor_factory=RealDictCursor)
+
+            cursor.execute(
+                """
+                select
+                    role_name,
+                    skill_name,
+                    importance_score,
+                    skill_type,
+                    level
+                from role_skill_matrix
+                where lower(role_name) = lower(%s)
+                order by importance_score desc
+                """,
+                (role_name,)
+            )
+
+            rows = cursor.fetchall()
+
+            cursor.close()
+            connection.close()
+
+            return [dict(row) for row in rows]
+
+        except Exception as e:
+            print(f"Failed to load role skill matrix for {role_name}: {e}")
             return []
 
     def _score_role_match(
@@ -182,11 +240,14 @@ If the user is from support, QA, testing, business analysis, data, security, clo
         if role_family and self._token_overlap_score(input_role, role_family) >= 0.5:
             score += 8
 
-        # 3. Skill match.
+        # 3. Canonical core skill match.
         matched_skills = []
         missing_core_skills = []
 
-        for original_skill, normalized_skill in zip(core_skills_raw, core_skills_normalized):
+        for original_skill, normalized_skill in zip(
+            core_skills_raw,
+            core_skills_normalized
+        ):
             skill_matched = False
 
             for input_skill in input_skills:
@@ -209,7 +270,6 @@ If the user is from support, QA, testing, business analysis, data, security, clo
         # 4. Important keyword boosting for broad IT families.
         score += self._keyword_boost(input_role, input_skills, role)
 
-        # Limit score to 100.
         score = min(score, 100)
 
         return {
@@ -217,6 +277,112 @@ If the user is from support, QA, testing, business analysis, data, security, clo
             "matched_skills": matched_skills,
             "missing_core_skills": missing_core_skills[:6],
         }
+
+    def _calculate_skill_gaps_from_matrix(
+        self,
+        profile: CareerProfileRequest,
+        role_skill_rows: List[Dict[str, Any]],
+        fallback_matched_skills: List[str],
+        fallback_missing_core_skills: List[str],
+    ) -> Dict[str, List[str]]:
+        """
+        Uses role_skill_matrix to calculate skill gaps.
+
+        If matrix is missing for a role, fallback to skills from canonical_roles.
+        """
+
+        if not role_skill_rows:
+            return {
+                "matched_skills": fallback_matched_skills,
+                "missing_core_skills": fallback_missing_core_skills,
+                "missing_growth_skills": [],
+                "high_priority_missing_skills": fallback_missing_core_skills[:5],
+            }
+
+        user_skills_normalized = [
+            self._normalize_text(skill)
+            for skill in profile.skills
+        ]
+
+        matched_skills: List[str] = []
+        missing_core_skills: List[str] = []
+        missing_growth_skills: List[str] = []
+        missing_skills_with_score: List[Dict[str, Any]] = []
+
+        for row in role_skill_rows:
+            skill_name = str(row.get("skill_name", ""))
+            normalized_skill_name = self._normalize_text(skill_name)
+            skill_type = str(row.get("skill_type", "")).lower()
+            importance_score = float(row.get("importance_score") or 5)
+
+            is_matched = self._is_skill_matched(
+                normalized_skill_name,
+                user_skills_normalized
+            )
+
+            if is_matched:
+                matched_skills.append(skill_name)
+            else:
+                if "core" in skill_type:
+                    missing_core_skills.append(skill_name)
+                elif "growth" in skill_type:
+                    missing_growth_skills.append(skill_name)
+                else:
+                    # If skill type is unclear, treat high-importance missing skill as core.
+                    if importance_score >= 8:
+                        missing_core_skills.append(skill_name)
+                    else:
+                        missing_growth_skills.append(skill_name)
+
+                missing_skills_with_score.append(
+                    {
+                        "skill_name": skill_name,
+                        "importance_score": importance_score,
+                        "skill_type": skill_type,
+                    }
+                )
+
+        missing_skills_with_score.sort(
+            key=lambda item: item["importance_score"],
+            reverse=True
+        )
+
+        high_priority_missing_skills = [
+            item["skill_name"]
+            for item in missing_skills_with_score[:6]
+        ]
+
+        return {
+            "matched_skills": self._dedupe_keep_order(matched_skills),
+            "missing_core_skills": self._dedupe_keep_order(missing_core_skills)[:8],
+            "missing_growth_skills": self._dedupe_keep_order(missing_growth_skills)[:8],
+            "high_priority_missing_skills": self._dedupe_keep_order(
+                high_priority_missing_skills
+            )[:6],
+        }
+
+    def _is_skill_matched(
+        self,
+        normalized_required_skill: str,
+        user_skills_normalized: List[str]
+    ) -> bool:
+        for user_skill in user_skills_normalized:
+            if not user_skill:
+                continue
+
+            if normalized_required_skill == user_skill:
+                return True
+
+            if normalized_required_skill in user_skill:
+                return True
+
+            if user_skill in normalized_required_skill:
+                return True
+
+            if self._token_overlap_score(normalized_required_skill, user_skill) >= 0.75:
+                return True
+
+        return False
 
     def _keyword_boost(
         self,
@@ -278,19 +444,18 @@ If the user is from support, QA, testing, business analysis, data, security, clo
         return boost
 
     def _fallback_result(self, profile: CareerProfileRequest) -> RoleIntelligenceResult:
-        """
-        Fallback is used if DB is unavailable or no role matched.
-        We still return a safe generic IT role result instead of breaking.
-        """
-
         return RoleIntelligenceResult(
             input_role=profile.current_role,
             canonical_role=profile.current_role,
             role_family="General IT",
             primary_cluster="General IT",
             secondary_clusters=[],
+
             matched_skills=profile.skills,
             missing_core_skills=[],
+            missing_growth_skills=[],
+            high_priority_missing_skills=[],
+
             adjacent_paths=[],
             confidence="Low",
             match_score=0.0,
@@ -325,6 +490,7 @@ If the user is from support, QA, testing, business analysis, data, security, clo
         text = text.replace("/", " ")
         text = text.replace("-", " ")
         text = text.replace("_", " ")
+        text = text.replace("&", " and ")
         text = re.sub(r"[^a-z0-9+#. ]", " ", text)
         text = re.sub(r"\s+", " ", text)
         return text.strip()
@@ -340,3 +506,16 @@ If the user is from support, QA, testing, business analysis, data, security, clo
         union = tokens1.union(tokens2)
 
         return len(intersection) / len(union)
+
+    def _dedupe_keep_order(self, values: List[str]) -> List[str]:
+        seen = set()
+        result = []
+
+        for value in values:
+            normalized = self._normalize_text(value)
+
+            if normalized not in seen:
+                seen.add(normalized)
+                result.append(value)
+
+        return result
