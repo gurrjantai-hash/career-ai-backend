@@ -4,7 +4,8 @@ from app.models import CareerProfileRequest, SalaryInsight
 def career_analysis_prompt(
     profile: CareerProfileRequest,
     salary: SalaryInsight,
-    role_cluster: str
+    role_cluster: str,
+    role_intelligence_context: str = ""
 ) -> str:
 
     return f"""
@@ -24,6 +25,8 @@ USER PROFILE:
 - Role cluster: {role_cluster}
 - Estimated market salary range from internal salary engine: {salary.market_min_lpa} to {salary.market_max_lpa} LPA
 - Salary gap estimate: {salary.salary_gap_lpa}
+
+{role_intelligence_context}
 
 PRODUCT POSITIONING:
 This product is not a generic career coach.

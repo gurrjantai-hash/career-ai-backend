@@ -4,6 +4,7 @@ from app.models import CareerProfileRequest, CareerAnalysisResponse
 from app.services.ai_service import AIService
 from app.services.salary_service import SalaryService
 from app.services.db_service import DBService
+from app.services.role_intelligence_service import RoleIntelligenceService
 from app.prompts.career_prompts import career_analysis_prompt
 
 
@@ -13,16 +14,36 @@ class CareerService:
         self.ai_service = AIService()
         self.salary_service = SalaryService()
         self.db_service = DBService()
+        self.role_intelligence_service = RoleIntelligenceService()
 
     def analyze(self, profile: CareerProfileRequest) -> CareerAnalysisResponse:
-        role_cluster = self.ai_service.classify_role_cluster(
-            profile.current_role,
-            profile.skills
-        )
+        role_intelligence = self.role_intelligence_service.map_role(profile)
+
+        role_cluster = role_intelligence.primary_cluster
+
+        # Keep old AI fallback if role intelligence confidence is low.
+        # This gives us hybrid intelligence instead of depending on only one method.
+        if role_intelligence.confidence == "Low":
+            ai_cluster = self.ai_service.classify_role_cluster(
+                profile.current_role,
+                profile.skills
+            )
+
+            if ai_cluster:
+                role_cluster = ai_cluster
 
         salary = self.salary_service.calculate_salary(profile, role_cluster)
 
-        prompt = career_analysis_prompt(profile, salary, role_cluster)
+        role_intelligence_context = self.role_intelligence_service.build_prompt_context(
+            role_intelligence
+        )
+
+        prompt = career_analysis_prompt(
+            profile,
+            salary,
+            role_cluster,
+            role_intelligence_context
+        )
 
         ai_result = self.ai_service.get_json_response(prompt)
 
@@ -58,7 +79,10 @@ class CareerService:
             roadmap_4_weeks=self._get_dict(ai_result, "roadmap_4_weeks"),
             resume_suggestions=self._get_list(ai_result, "resume_suggestions"),
 
-            confidence_notes=self._get_list(ai_result, "confidence_notes"),
+            confidence_notes=self._add_role_intelligence_confidence_note(
+                self._get_list(ai_result, "confidence_notes"),
+                role_intelligence
+            ),
 
             disclaimer="This is an AI-assisted estimate based on your profile and market patterns. It is not a guaranteed salary prediction."
         )
@@ -66,6 +90,20 @@ class CareerService:
         self.db_service.save_career_analysis(profile, response)
 
         return response
+
+    def _add_role_intelligence_confidence_note(
+        self,
+        notes: List[str],
+        role_intelligence
+    ) -> List[str]:
+        role_note = (
+            f"Role mapping: your input role was matched to "
+            f"'{role_intelligence.canonical_role}' under "
+            f"'{role_intelligence.primary_cluster}' with "
+            f"{role_intelligence.confidence.lower()} confidence."
+        )
+
+        return [role_note] + notes
 
     def _get_string(self, data: Dict[str, Any], key: str, default: str) -> str:
         value = data.get(key)

@@ -122,4 +122,16 @@ class LearningPlanResponse(BaseModel):
     weekly_learning_plan: Dict[str, List[str]]
     job_readiness_checklist: List[str]
 
-    disclaimer: str     
+    disclaimer: str
+
+class RoleIntelligenceResult(BaseModel):
+    input_role: str
+    canonical_role: str
+    role_family: str
+    primary_cluster: str
+    secondary_clusters: List[str]
+    matched_skills: List[str]
+    missing_core_skills: List[str]
+    adjacent_paths: List[str]
+    confidence: str
+    match_score: float        
