@@ -21,8 +21,6 @@ class CareerService:
 
         role_cluster = role_intelligence.primary_cluster
 
-        # Keep old AI fallback if role intelligence confidence is low.
-        # This gives us hybrid intelligence instead of depending on only one method.
         if role_intelligence.confidence == "Low":
             ai_cluster = self.ai_service.classify_role_cluster(
                 profile.current_role,
@@ -32,7 +30,11 @@ class CareerService:
             if ai_cluster:
                 role_cluster = ai_cluster
 
-        salary = self.salary_service.calculate_salary(profile, role_cluster)
+        salary = self.salary_service.calculate_salary(
+            profile=profile,
+            role_cluster=role_cluster,
+            role_intelligence=role_intelligence
+        )
 
         role_intelligence_context = self.role_intelligence_service.build_prompt_context(
             role_intelligence
