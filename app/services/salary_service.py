@@ -133,8 +133,15 @@ class SalaryService:
                 path_name=path_name,
             )
 
-            salary_band = self._load_salary_band_by_cluster(target_cluster)
+            fit_level = self._adjust_fit_for_target_role(
+                target_role=target_role,
+                fit_level=fit_level,
+                profile=profile,
+                target_cluster=target_cluster,
+            )
 
+            salary_band = self._load_salary_band_by_cluster(target_cluster)
+            
             if not salary_band:
                 continue
 
@@ -223,21 +230,35 @@ class SalaryService:
 
         return candidates
 
+    def _fit_rank(self, fit_level: str) -> int:
+        normalized = self._normalize_text(fit_level)
+
+        if "high" in normalized:
+            return 3
+
+        if "medium" in normalized:
+            return 2
+
+        if "low" in normalized:
+            return 1
+
+        return 2
+
     def _prioritize_target_candidates(
-        self,
-        candidates: List[Dict[str, str]]
+            self,
+            candidates: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
         """
         Cleans and prioritizes target roles before salary calculation.
 
-        Why:
-        AI can generate many similar roles inside growth paths.
-        Example:
-        - Cloud Support Engineer
-        - Cloud Operations Engineer
-        - Technical Support Engineer
+        Important:
+        If the same role appears multiple times, keep the version with
+        the strongest fit level.
 
-        For salary insight card, we want cleaner and more meaningful options.
+        Example:
+        - Senior Scrum Master from top-level target_roles = Medium
+        - Senior Scrum Master from growth_paths = High
+        Keep High.
         """
 
         if not candidates:
@@ -259,15 +280,45 @@ class SalaryService:
             "sdet",
             "senior react developer",
             "frontend engineer",
+            "frontend engineer ii",
+            "product engineer",
             "backend engineer",
+            "cloud backend engineer",
+            "senior full stack developer",
             "data analyst",
             "business analyst",
             "product analyst",
-            "scrum master",
+            "senior scrum master",
+            "agile coach",
+            "project manager",
             "cloud engineer",
             "security tester",
             "power bi developer"
         ]
+
+        # Step 1: Merge duplicates and keep strongest fit.
+        best_by_role: Dict[str, Dict[str, str]] = {}
+
+        for candidate in candidates:
+            role = candidate.get("target_role", "").strip()
+            normalized_role = self._normalize_text(role)
+
+            if not normalized_role:
+                continue
+
+            existing = best_by_role.get(normalized_role)
+
+            if not existing:
+                best_by_role[normalized_role] = candidate
+                continue
+
+            existing_fit_rank = self._fit_rank(existing.get("fit_level", "Medium"))
+            new_fit_rank = self._fit_rank(candidate.get("fit_level", "Medium"))
+
+            if new_fit_rank > existing_fit_rank:
+                best_by_role[normalized_role] = candidate
+
+        deduped_candidates = list(best_by_role.values())
 
         def score_candidate(candidate: Dict[str, str]) -> int:
             role = self._normalize_text(candidate.get("target_role", ""))
@@ -276,17 +327,17 @@ class SalaryService:
 
             score = 0
 
-            # Prefer top-level target roles because they are usually cleaner.
-            if path_name == "recommended target role":
-                score += 30
-
-            # Prefer high fit.
+            # Fit should matter more than source.
             if "high" in fit:
-                score += 25
+                score += 40
             elif "medium" in fit:
-                score += 15
+                score += 25
             elif "low" in fit:
-                score += 5
+                score += 10
+
+            # Top-level target roles are cleaner, but should not override High fit.
+            if path_name == "recommended target role":
+                score += 10
 
             # Prefer specific business-relevant target roles.
             for index, keyword in enumerate(preferred_keywords_order):
@@ -301,29 +352,11 @@ class SalaryService:
 
             return score
 
-        sorted_candidates = sorted(
-            candidates,
+        return sorted(
+            deduped_candidates,
             key=score_candidate,
             reverse=True
         )
-
-        cleaned: List[Dict[str, str]] = []
-        seen_normalized_roles = set()
-
-        for candidate in sorted_candidates:
-            role = candidate.get("target_role", "").strip()
-            normalized_role = self._normalize_text(role)
-
-            if not normalized_role:
-                continue
-
-            if normalized_role in seen_normalized_roles:
-                continue
-
-            seen_normalized_roles.add(normalized_role)
-            cleaned.append(candidate)
-
-        return cleaned
     
     def _calculate_target_salary_range(
         self,
@@ -358,6 +391,122 @@ class SalaryService:
 
         return estimated_min, estimated_max, experience_label
 
+    def _adjust_fit_for_target_role(
+        self,
+        target_role: str,
+        fit_level: str,
+        profile: CareerProfileRequest,
+        target_cluster: str,
+    ) -> str:
+        """
+        Adjusts fit level based on the specific target role.
+
+        Why:
+        A growth path can be High Fit overall, but not every role inside that
+        growth path should automatically become High Fit.
+
+        Example:
+        API Tester growth path may be High Fit, but SDET should remain Medium
+        if programming skills are missing.
+        """
+
+        role = self._normalize_text(target_role)
+        current_role = self._normalize_text(profile.current_role)
+        skills_text = self._normalize_text(" ".join(profile.skills or []))
+        current_fit = fit_level or "Medium"
+
+        has_programming = any(
+            skill in skills_text
+            for skill in [
+                "java",
+                "python",
+                "javascript",
+                "typescript",
+                "coding",
+                "programming",
+                "selenium",
+                "restassured",
+                "cypress",
+                "playwright",
+                "automation framework",
+            ]
+        )
+
+        has_cloud_devops = any(
+            skill in skills_text
+            for skill in [
+                "aws",
+                "azure",
+                "gcp",
+                "docker",
+                "kubernetes",
+                "terraform",
+                "jenkins",
+                "ci cd",
+                "cicd",
+                "shell scripting",
+                "linux",
+            ]
+        )
+
+        has_project_management = any(
+            skill in skills_text
+            for skill in [
+                "project management",
+                "risk management",
+                "budgeting",
+                "delivery management",
+                "program management",
+                "stakeholder management",
+            ]
+        )
+
+        has_agile_coaching = any(
+            skill in skills_text
+            for skill in [
+                "coaching",
+                "agile coaching",
+                "transformation",
+                "change management",
+                "team facilitation",
+                "stakeholder management",
+            ]
+        )
+
+        # SDET needs programming/automation foundation.
+        if "sdet" in role and not has_programming:
+            return "Medium"
+
+        # Product Engineer is broader than pure frontend React work.
+        if "product engineer" in role and "react" in current_role:
+            return "Medium"
+
+        # Agile Coach requires coaching/transformation maturity.
+        if "agile coach" in role and not has_agile_coaching:
+            return "Medium"
+
+        # Project Manager is broader than Scrum Master.
+        if "project manager" in role and not has_project_management:
+            return "Medium"
+
+        # Program/Portfolio roles are usually not immediate targets below 8 years.
+        if ("program manager" in role or "portfolio manager" in role) and profile.experience_years < 8:
+            return "Low"
+
+        # Architect/Lead roles should not be High for low experience.
+        if (
+            "architect" in role
+            or "principal" in role
+            or "staff engineer" in role
+            or "technical lead" in role
+        ) and profile.experience_years < 7:
+            return "Medium"
+
+        # DevOps/SRE should be Medium if cloud/devops readiness is weak.
+        if ("devops" in role or "sre" in role) and not has_cloud_devops:
+            return "Medium"
+
+        return current_fit
 
     def _target_fit_multiplier(self, fit_level: str) -> float:
         normalized_fit = fit_level.lower()
@@ -378,74 +527,112 @@ class SalaryService:
         """
         Maps AI-generated target roles to salary_bands_v2 role_key.
 
-        This is rule-based for now.
-        Later Phase 2 can improve this using canonical role lookup or embeddings.
+        Important:
+        Target role name gets priority over path name.
+
+        Why:
+        If target_role = "Senior API Tester"
+        and path_name = "Automation QA Engineer",
+        salary cluster should still be API Testing, not Automation Testing.
         """
 
-        text = self._normalize_text(f"{target_role} {path_name}")
+        role_text = self._normalize_text(target_role)
+        path_text = self._normalize_text(path_name)
 
-        mapping_rules = [
-            # Support / Cloud / DevOps
-            (["cloud support", "cloud operations", "cloud administrator", "technical support engineer"], "Cloud Support"),
-            (["production support", "application support engineer ii", "incident manager"], "Production Support"),
-            (["application support"], "Application Support"),
-            (["junior devops", "devops associate", "devops engineer", "devops"], "DevOps"),
-            (["site reliability engineer", "sre", "junior sre"], "DevOps"),
-            (["cloud engineer", "cloud infrastructure"], "Cloud Engineering"),
-
+        # Step 1: Direct target-role mapping.
+        # This must run before path-based mapping.
+        direct_role_rules = [
             # QA / Testing
-            (["manual qa", "manual tester", "qa tester", "software tester"], "Testing/QA"),
-            (["automation qa", "automation tester", "selenium"], "Automation Testing"),
-            (["api tester", "api testing", "senior api tester"], "API Testing"),
-            (["performance tester", "load tester", "jmeter"], "Performance Testing"),
+            (["senior api tester", "api tester", "api testing"], "API Testing"),
+            (["automation qa engineer", "automation tester", "automation qa"], "Automation Testing"),
             (["sdet"], "SDET"),
+            (["performance tester", "load tester", "jmeter"], "Performance Testing"),
+            (["manual qa", "manual tester", "qa tester", "software tester"], "Testing/QA"),
 
-            # Software development
-            (["react", "frontend", "ui developer", "angular"], "Frontend Engineering"),
-            (["full stack", "fullstack"], "Full Stack Engineering"),
-            (["backend", "java developer", "spring", "node", "python backend", ".net", "api developer"], "Backend Engineering"),
+            # Frontend / backend / full stack
+            (["senior react developer", "react developer", "frontend engineer ii", "frontend engineer", "ui developer"], "Frontend Engineering"),
+            (["product engineer"], "Frontend Engineering"),
+            (["senior full stack developer", "full stack developer", "fullstack developer"], "Full Stack Engineering"),
+            (["backend engineer", "backend developer", "java developer", "node developer", "python backend", ".net developer"], "Backend Engineering"),
+            (["cloud backend engineer"], "Backend Engineering"),
+
+            # Support / cloud / DevOps
+            (["cloud support engineer", "cloud operations engineer", "cloud operations specialist", "cloud administrator"], "Cloud Support"),
+            (["production support engineer", "application support engineer ii", "incident manager"], "Production Support"),
+            (["application support engineer", "application support specialist"], "Application Support"),
+            (["junior devops engineer", "devops engineer", "devops associate"], "DevOps"),
+            (["site reliability engineer", "sre", "junior sre"], "DevOps"),
+            (["cloud engineer", "cloud infrastructure engineer"], "Cloud Engineering"),
+            (["infrastructure engineer"], "System Administration"),
 
             # Data / AI
             (["data analyst", "reporting analyst"], "Data Analytics"),
-            (["power bi", "bi analyst", "business intelligence"], "Business Intelligence"),
-            (["data engineer", "etl"], "Data Engineering"),
+            (["power bi developer", "bi analyst", "business intelligence analyst"], "Business Intelligence"),
+            (["data engineer", "etl developer"], "Data Engineering"),
             (["data scientist"], "Data Science"),
             (["ml engineer", "machine learning engineer", "ai engineer"], "AI/ML"),
-            (["ai automation", "llm app", "genai"], "AI Automation"),
-            (["mlops"], "MLOps"),
+            (["ai automation engineer", "llm app developer", "genai developer"], "AI Automation"),
+            (["mlops engineer"], "MLOps"),
 
-            # BA / Product / Agile
+            # BA / product / agile
             (["business analyst", "it ba", "functional analyst"], "Business Analysis"),
             (["product analyst", "growth analyst"], "Product Analysis"),
-            (["scrum master", "agile coach"], "Agile Delivery"),
-            (["project manager", "program manager"], "Agile Delivery"),
-            (["project coordinator", "pmo"], "Project Coordination"),
+            (["senior scrum master", "scrum master lead", "scrum master"], "Agile Delivery"),
+            (["agile coach", "agile consultant", "transformation lead"], "Agile Delivery"),
+            (["project manager", "program manager", "delivery manager"], "Agile Delivery"),
+            (["project coordinator", "pmo analyst"], "Project Coordination"),
 
-            # Infra / Security / Others
-            (["database", "sql developer", "plsql", "dba"], "Database Engineering"),
-            (["security tester", "penetration", "vapt"], "Security Testing"),
-            (["security analyst", "soc", "cyber"], "Cyber Security"),
-            (["network"], "Network Engineering"),
+            # Security / infra / platform
+            (["security tester", "penetration tester", "vapt tester"], "Security Testing"),
+            (["security analyst", "soc analyst", "cyber security analyst"], "Cyber Security"),
+            (["network engineer"], "Network Engineering"),
             (["linux administrator"], "Linux Administration"),
             (["windows administrator"], "Windows Administration"),
             (["system administrator"], "System Administration"),
+            (["database developer", "sql developer", "plsql developer", "dba"], "Database Engineering"),
 
-            # Mobile / Platforms
-            (["android"], "Android Development"),
-            (["ios", "swift"], "iOS Development"),
-            (["flutter", "mobile app"], "Cross-platform Mobile Development"),
-            (["salesforce"], "Salesforce"),
-            (["servicenow"], "ServiceNow"),
-            (["rpa", "uipath"], "RPA/Automation"),
-            (["technical writer", "documentation"], "Technical Documentation"),
+            # Mobile / enterprise / docs
+            (["android developer"], "Android Development"),
+            (["ios developer", "swift developer"], "iOS Development"),
+            (["flutter developer", "mobile app developer"], "Cross-platform Mobile Development"),
+            (["salesforce developer"], "Salesforce"),
+            (["servicenow developer"], "ServiceNow"),
+            (["rpa developer", "uipath developer"], "RPA/Automation"),
+            (["technical writer", "documentation specialist"], "Technical Documentation"),
         ]
 
-        for keywords, cluster in mapping_rules:
-            if any(keyword in text for keyword in keywords):
+        for keywords, cluster in direct_role_rules:
+            if any(keyword in role_text for keyword in keywords):
+                return cluster
+
+        # Step 2: If target role is generic, use path context.
+        combined_text = self._normalize_text(f"{target_role} {path_name}")
+
+        path_rules = [
+            (["cloud support", "cloud operations"], "Cloud Support"),
+            (["production support"], "Production Support"),
+            (["application support"], "Application Support"),
+            (["devops"], "DevOps"),
+            (["sre"], "DevOps"),
+            (["cloud"], "Cloud Engineering"),
+            (["automation qa", "selenium"], "Automation Testing"),
+            (["api testing"], "API Testing"),
+            (["frontend", "react", "angular"], "Frontend Engineering"),
+            (["backend", "java", "spring", "node", "python"], "Backend Engineering"),
+            (["full stack", "fullstack"], "Full Stack Engineering"),
+            (["scrum", "agile", "project manager"], "Agile Delivery"),
+            (["business analyst"], "Business Analysis"),
+            (["product analyst"], "Product Analysis"),
+            (["data analyst"], "Data Analytics"),
+            (["security"], "Cyber Security"),
+        ]
+
+        for keywords, cluster in path_rules:
+            if any(keyword in combined_text for keyword in keywords):
                 return cluster
 
         return "General IT"
-    
+
     def _build_target_salary_note(
         self,
         target_role: str,
