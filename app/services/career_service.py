@@ -21,14 +21,14 @@ class CareerService:
 
         role_cluster = role_intelligence.primary_cluster
 
-        if role_intelligence.confidence == "Low":
+        if role_intelligence.confidence == "Low" and role_cluster == "General IT":
             ai_cluster = self.ai_service.classify_role_cluster(
-                profile.current_role,
-                profile.skills
+            profile.current_role,
+            profile.skills
             )
 
             if ai_cluster:
-                role_cluster = ai_cluster
+                role_cluster = self._normalize_ai_cluster(ai_cluster)
 
         salary = self.salary_service.calculate_salary(
             profile=profile,
@@ -48,6 +48,15 @@ class CareerService:
         )
 
         ai_result = self.ai_service.get_json_response(prompt)
+
+        growth_paths = self._get_list(ai_result, "growth_paths")
+        target_roles = self._get_list(ai_result, "target_roles")
+
+        target_salary_insights = self.salary_service.calculate_target_salary_insights(
+            profile=profile,
+            growth_paths=growth_paths,
+            target_roles=target_roles,
+        )
 
         response = CareerAnalysisResponse(
             role_cluster=role_cluster,
@@ -70,12 +79,12 @@ class CareerService:
             ),
 
             salary_insight=salary,
-
-            target_roles=self._get_list(ai_result, "target_roles"),
+            target_salary_insights=target_salary_insights,
+            target_roles=target_roles,
             top_skill_gaps=self._get_list(ai_result, "top_skill_gaps"),
             skill_salary_impact=self._get_dict(ai_result, "skill_salary_impact"),
 
-            growth_paths=self._get_list(ai_result, "growth_paths"),
+            growth_paths=growth_paths,
             why_recommendations=self._get_list(ai_result, "why_recommendations"),
 
             roadmap_4_weeks=self._get_dict(ai_result, "roadmap_4_weeks"),
@@ -124,3 +133,29 @@ class CareerService:
         if isinstance(value, dict):
             return value
         return {}
+    
+    def _normalize_ai_cluster(self, ai_cluster: str) -> str:
+        normalized = ai_cluster.strip().lower()
+
+        cluster_mapping = {
+            "operations": "General IT",
+            "it operations": "General IT",
+            "software": "General IT",
+            "technology": "General IT",
+            "support": "Application Support",
+            "application support": "Application Support",
+            "production support": "Production Support",
+            "qa": "Testing/QA",
+            "testing": "Testing/QA",
+            "quality assurance": "Testing/QA",
+            "frontend": "Frontend Engineering",
+            "backend": "Backend Engineering",
+            "full stack": "Full Stack Engineering",
+            "devops": "DevOps",
+            "cloud": "Cloud Engineering",
+            "data": "Data Analytics",
+            "business analysis": "Business Analysis",
+            "business analyst": "Business Analysis",
+        }
+
+        return cluster_mapping.get(normalized, "General IT")

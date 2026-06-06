@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 
 class CareerProfileRequest(BaseModel):
@@ -18,6 +18,12 @@ class SalaryInsight(BaseModel):
     salary_gap_lpa: Optional[str]
     confidence: str
 
+class TargetSalaryInsight(BaseModel):
+    target_role: str
+    estimated_min_lpa: float
+    estimated_max_lpa: float
+    fit_level: str
+    salary_upside_note: str
 
 class GrowthPath(BaseModel):
     path_name: str
@@ -36,7 +42,7 @@ class CareerAnalysisResponse(BaseModel):
     goal_strategy: str
 
     salary_insight: SalaryInsight
-
+    target_salary_insights: List[TargetSalaryInsight] = Field(default_factory=list)
     target_roles: List[str]
     top_skill_gaps: List[str]
     skill_salary_impact: Dict[str, str]
