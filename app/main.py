@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from app.services.embedding_service import EmbeddingService
+from app.services.role_intelligence_service import RoleIntelligenceService
 
 from app.models import (
     CareerProfileRequest,
@@ -55,4 +57,23 @@ def generate_learning_plan(request: LearningPlanRequest):
     try:
         return learning_service.generate_learning_plan(request)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))    
+        raise HTTPException(status_code=500, detail=str(e))   
+
+@app.post("/debug/seed-role-embeddings")
+def seed_role_embeddings():
+    service = EmbeddingService()
+    return service.seed_role_title_embeddings()
+
+
+@app.get("/debug/search-role-embedding")
+def search_role_embedding(role: str):
+    service = EmbeddingService()
+    return {
+        "input_role": role,
+        "matches": service.find_closest_role(role, limit=5)
+    }  
+
+@app.post("/debug/role-intelligence")
+def debug_role_intelligence(profile: CareerProfileRequest):
+    service = RoleIntelligenceService()
+    return service.map_role(profile)   
