@@ -5,6 +5,7 @@ from app.services.ai_service import AIService
 from app.services.salary_service import SalaryService
 from app.services.db_service import DBService
 from app.services.role_intelligence_service import RoleIntelligenceService
+from app.services.skill_premium_service import SkillPremiumService
 from app.prompts.career_prompts import career_analysis_prompt
 
 
@@ -15,6 +16,7 @@ class CareerService:
         self.salary_service = SalaryService()
         self.db_service = DBService()
         self.role_intelligence_service = RoleIntelligenceService()
+        self.skill_premium_service = SkillPremiumService()
 
     def analyze(self, profile: CareerProfileRequest) -> CareerAnalysisResponse:
         role_intelligence = self.role_intelligence_service.map_role(profile)
@@ -23,8 +25,8 @@ class CareerService:
 
         if role_intelligence.confidence == "Low" and role_cluster == "General IT":
             ai_cluster = self.ai_service.classify_role_cluster(
-            profile.current_role,
-            profile.skills
+                profile.current_role,
+                profile.skills
             )
 
             if ai_cluster:
@@ -51,11 +53,19 @@ class CareerService:
 
         growth_paths = self._get_list(ai_result, "growth_paths")
         target_roles = self._get_list(ai_result, "target_roles")
+        top_skill_gaps = self._get_list(ai_result, "top_skill_gaps")
 
         target_salary_insights = self.salary_service.calculate_target_salary_insights(
             profile=profile,
             growth_paths=growth_paths,
             target_roles=target_roles,
+        )
+
+        skill_premium_insights = self.skill_premium_service.get_skill_premium_insights(
+            role_cluster=role_cluster,
+            top_skill_gaps=top_skill_gaps,
+            target_roles=target_roles,
+            limit=6
         )
 
         response = CareerAnalysisResponse(
@@ -81,8 +91,9 @@ class CareerService:
             salary_insight=salary,
             target_salary_insights=target_salary_insights,
             target_roles=target_roles,
-            top_skill_gaps=self._get_list(ai_result, "top_skill_gaps"),
+            top_skill_gaps=top_skill_gaps,
             skill_salary_impact=self._get_dict(ai_result, "skill_salary_impact"),
+            skill_premium_insights=skill_premium_insights,
 
             growth_paths=growth_paths,
             why_recommendations=self._get_list(ai_result, "why_recommendations"),
@@ -133,7 +144,7 @@ class CareerService:
         if isinstance(value, dict):
             return value
         return {}
-    
+
     def _normalize_ai_cluster(self, ai_cluster: str) -> str:
         normalized = ai_cluster.strip().lower()
 

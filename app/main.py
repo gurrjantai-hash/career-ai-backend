@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.embedding_service import EmbeddingService
 from app.services.role_intelligence_service import RoleIntelligenceService
+from app.services.skill_premium_service import SkillPremiumService
 
 from app.models import (
     CareerProfileRequest,
@@ -76,4 +77,19 @@ def search_role_embedding(role: str):
 @app.post("/debug/role-intelligence")
 def debug_role_intelligence(profile: CareerProfileRequest):
     service = RoleIntelligenceService()
-    return service.map_role(profile)   
+    return service.map_role(profile)
+
+@app.post("/debug/skill-premium")
+def debug_skill_premium(payload: dict):
+    service = SkillPremiumService()
+
+    return {
+        "role_cluster": payload.get("role_cluster"),
+        "top_skill_gaps": payload.get("top_skill_gaps", []),
+        "premium_insights": service.get_skill_premium_insights(
+            role_cluster=payload.get("role_cluster"),
+            top_skill_gaps=payload.get("top_skill_gaps", []),
+            target_roles=payload.get("target_roles", []),
+            limit=6
+        )
+    }

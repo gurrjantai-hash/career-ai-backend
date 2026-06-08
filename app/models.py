@@ -18,12 +18,24 @@ class SalaryInsight(BaseModel):
     salary_gap_lpa: Optional[str]
     confidence: str
 
+
 class TargetSalaryInsight(BaseModel):
     target_role: str
     estimated_min_lpa: float
     estimated_max_lpa: float
     fit_level: str
     salary_upside_note: str
+
+
+class SkillPremiumInsight(BaseModel):
+    skill_name: str
+    premium_score: float
+    market_relevance: str
+    learning_difficulty: str
+    proof_required: str
+    priority: str
+    source: str
+
 
 class GrowthPath(BaseModel):
     path_name: str
@@ -46,6 +58,7 @@ class CareerAnalysisResponse(BaseModel):
     target_roles: List[str]
     top_skill_gaps: List[str]
     skill_salary_impact: Dict[str, str]
+    skill_premium_insights: List[SkillPremiumInsight] = Field(default_factory=list)
 
     growth_paths: List[GrowthPath]
     why_recommendations: List[str]
@@ -56,6 +69,7 @@ class CareerAnalysisResponse(BaseModel):
     confidence_notes: List[str]
 
     disclaimer: str
+
 
 class ResumeOptimizeRequest(BaseModel):
     current_role: str = Field(..., example="Java Developer")
@@ -85,6 +99,7 @@ class ResumeOptimizeResponse(BaseModel):
     linkedin_summary: str
     interview_positioning: List[str]
     disclaimer: str
+
 
 class LearningPlanRequest(BaseModel):
     current_role: str = Field(..., example="Java Developer")
@@ -130,6 +145,7 @@ class LearningPlanResponse(BaseModel):
 
     disclaimer: str
 
+
 class RoleIntelligenceResult(BaseModel):
     input_role: str
     canonical_role: str
@@ -144,4 +160,4 @@ class RoleIntelligenceResult(BaseModel):
 
     adjacent_paths: List[str]
     confidence: str
-    match_score: float       
+    match_score: float
