@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.services.embedding_service import EmbeddingService
 from app.services.role_intelligence_service import RoleIntelligenceService
 from app.services.skill_premium_service import SkillPremiumService
+from app.services.feedback_service import FeedbackService
 
 from app.models import (
     CareerProfileRequest,
@@ -17,6 +18,8 @@ from app.models import (
     ResumeOptimizeResponse,
     LearningPlanRequest,
     LearningPlanResponse,
+    CareerFeedbackRequest,
+    CareerFeedbackResponse,
 )
 
 from app.services.career_service import CareerService
@@ -46,7 +49,7 @@ app.add_middleware(
 career_service = CareerService()
 resume_service = ResumeService()
 learning_service = LearningService()
-
+feedback_service = FeedbackService()
 
 @app.get("/")
 def health_check():
@@ -304,3 +307,12 @@ def _get_skill_premium_cluster_counts(cursor):
         }
         for cluster in required_clusters
     ]
+
+@app.post("/api/feedback", response_model=CareerFeedbackResponse)
+def save_feedback(request: CareerFeedbackRequest):
+    result = feedback_service.save_feedback(request)
+
+    if not result.success:
+        raise HTTPException(status_code=500, detail=result.message)
+
+    return result

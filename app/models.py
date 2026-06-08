@@ -161,3 +161,27 @@ class RoleIntelligenceResult(BaseModel):
     adjacent_paths: List[str]
     confidence: str
     match_score: float
+
+class CareerFeedbackRequest(BaseModel):
+    career_analysis_id: Optional[int] = None
+
+    user_current_role: Optional[str] = None
+    detected_role_cluster: Optional[str] = None
+    user_experience_years: Optional[float] = None
+    user_city: Optional[str] = None
+    user_goal: Optional[str] = None
+
+    role_mapping_rating: Optional[str] = None
+    salary_realism_rating: Optional[str] = None
+    target_roles_rating: Optional[str] = None
+    skill_recommendations_rating: Optional[str] = None
+
+    overall_rating: Optional[int] = None
+    would_pay: Optional[str] = None
+    feedback_comment: Optional[str] = None
+
+
+class CareerFeedbackResponse(BaseModel):
+    success: bool
+    feedback_id: Optional[int] = None
+    message: str    
