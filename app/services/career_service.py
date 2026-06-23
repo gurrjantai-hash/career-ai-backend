@@ -1,4 +1,5 @@
 from typing import Any, Dict, List
+from urllib import response
 
 from app.models import CareerProfileRequest, CareerAnalysisResponse
 from app.services.ai_service import AIService
@@ -109,7 +110,10 @@ class CareerService:
             disclaimer="This is an AI-assisted estimate based on your profile and market patterns. It is not a guaranteed salary prediction."
         )
 
-        self.db_service.save_career_analysis(profile, response)
+        analysis_id = self.db_service.save_career_analysis(profile, response)
+
+        if analysis_id:
+            response.analysis_id = analysis_id
 
         return response
 

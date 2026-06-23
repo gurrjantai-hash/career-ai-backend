@@ -46,6 +46,7 @@ class GrowthPath(BaseModel):
 
 
 class CareerAnalysisResponse(BaseModel):
+    analysis_id: Optional[str] = None
     role_cluster: str
     current_level: str
 
@@ -163,7 +164,7 @@ class RoleIntelligenceResult(BaseModel):
     match_score: float
 
 class CareerFeedbackRequest(BaseModel):
-    career_analysis_id: Optional[int] = None
+    career_analysis_id: Optional[str] = None
 
     user_current_role: Optional[str] = None
     detected_role_cluster: Optional[str] = None

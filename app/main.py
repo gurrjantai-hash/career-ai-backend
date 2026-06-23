@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.services.embedding_service import EmbeddingService
 from app.services.role_intelligence_service import RoleIntelligenceService
 from app.services.skill_premium_service import SkillPremiumService
 from app.services.feedback_service import FeedbackService
@@ -82,12 +81,14 @@ def generate_learning_plan(request: LearningPlanRequest):
 
 @app.post("/debug/seed-role-embeddings")
 def seed_role_embeddings():
+    from app.services.embedding_service import EmbeddingService
     service = EmbeddingService()
     return service.seed_role_title_embeddings()
 
 
 @app.get("/debug/search-role-embedding")
 def search_role_embedding(role: str):
+    from app.services.embedding_service import EmbeddingService
     service = EmbeddingService()
     return {
         "input_role": role,
