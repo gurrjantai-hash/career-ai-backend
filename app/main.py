@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.services.role_intelligence_service import RoleIntelligenceService
 from app.services.skill_premium_service import SkillPremiumService
 from app.services.feedback_service import FeedbackService
+from app.services.execution_service import ExecutionService
 
 from app.models import (
     CareerProfileRequest,
@@ -19,6 +20,9 @@ from app.models import (
     LearningPlanResponse,
     CareerFeedbackRequest,
     CareerFeedbackResponse,
+    CreateExecutionPlanRequest,
+    UpdateExecutionTaskRequest,
+    ExecutionPlanResponse,  
 )
 
 from app.services.career_service import CareerService
@@ -49,6 +53,7 @@ career_service = CareerService()
 resume_service = ResumeService()
 learning_service = LearningService()
 feedback_service = FeedbackService()
+execution_service = ExecutionService()
 
 @app.get("/")
 def health_check():
@@ -315,5 +320,37 @@ def save_feedback(request: CareerFeedbackRequest):
 
     if not result.success:
         raise HTTPException(status_code=500, detail=result.message)
+
+    return result
+
+@app.post("/api/execution/plan", response_model=ExecutionPlanResponse)
+def create_execution_plan(request: CreateExecutionPlanRequest):
+    result = execution_service.create_execution_plan(request.career_analysis_id)
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    return result
+
+
+@app.get("/api/execution/plan/{career_analysis_id}", response_model=ExecutionPlanResponse)
+def get_execution_plan(career_analysis_id: str):
+    result = execution_service.get_execution_plan_by_analysis(career_analysis_id)
+
+    if not result.success:
+        raise HTTPException(status_code=404, detail=result.message)
+
+    return result
+
+
+@app.patch("/api/execution/tasks/{task_id}", response_model=ExecutionPlanResponse)
+def update_execution_task(task_id: str, request: UpdateExecutionTaskRequest):
+    result = execution_service.update_task_completion(
+        task_id=task_id,
+        is_completed=request.is_completed
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
 
     return result

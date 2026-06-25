@@ -185,4 +185,31 @@ class CareerFeedbackRequest(BaseModel):
 class CareerFeedbackResponse(BaseModel):
     success: bool
     feedback_id: Optional[int] = None
-    message: str    
+    message: str  
+
+class CreateExecutionPlanRequest(BaseModel):
+    career_analysis_id: str
+
+
+class UpdateExecutionTaskRequest(BaseModel):
+    is_completed: bool
+
+
+class ExecutionTaskResponse(BaseModel):
+    task_id: str
+    week_key: str
+    task_order: int
+    task_text: str
+    is_completed: bool
+    completed_at: Optional[str] = None
+
+
+class ExecutionPlanResponse(BaseModel):
+    success: bool
+    execution_plan_id: Optional[str] = None
+    career_analysis_id: Optional[str] = None
+    target_role: Optional[str] = None
+    role_cluster: Optional[str] = None
+    progress_percentage: float = 0
+    tasks: List[ExecutionTaskResponse] = Field(default_factory=list)
+    message: str      
