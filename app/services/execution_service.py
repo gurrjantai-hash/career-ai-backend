@@ -201,7 +201,11 @@ class ExecutionService:
 
             cursor.execute(
                 """
-                select execution_plan_id
+                select
+                    id,
+                    execution_plan_id,
+                    week_key,
+                    is_completed
                 from career_execution_tasks
                 where id = %s
                 """,
@@ -219,6 +223,50 @@ class ExecutionService:
                 )
 
             execution_plan_id = task["execution_plan_id"]
+
+            cursor.execute(
+                """
+                select
+                    id,
+                    week_key,
+                    is_completed
+                from career_execution_tasks
+                where execution_plan_id = %s
+                """,
+                (execution_plan_id,)
+            )
+
+            all_tasks = cursor.fetchall()
+            current_week_number = self._week_number(task["week_key"])
+
+            if is_completed:
+                incomplete_previous_tasks = [
+                    row for row in all_tasks
+                    if self._week_number(row["week_key"]) < current_week_number
+                    and not row["is_completed"]
+                ]
+
+                if incomplete_previous_tasks:
+                    cursor.close()
+                    connection.close()
+                    return ExecutionPlanResponse(
+                        success=False,
+                        message="Please complete previous week tasks before unlocking this week."
+                    )
+            else:
+                completed_later_tasks = [
+                    row for row in all_tasks
+                    if self._week_number(row["week_key"]) > current_week_number
+                    and row["is_completed"]
+                ]
+
+                if completed_later_tasks:
+                    cursor.close()
+                    connection.close()
+                    return ExecutionPlanResponse(
+                        success=False,
+                        message="You cannot uncomplete this task because later week tasks are already completed."
+                    )
 
             cursor.execute(
                 """
@@ -392,6 +440,10 @@ class ExecutionService:
             return int(digits) if digits else 999
 
         return sorted(week_keys, key=sort_key)
+    
+    def _week_number(self, week_key: str) -> int:
+        digits = "".join(char for char in str(week_key) if char.isdigit())
+        return int(digits) if digits else 999
 
     def _safe_json(self, value: Any):
         if isinstance(value, (dict, list)):
