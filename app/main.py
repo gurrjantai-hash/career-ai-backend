@@ -3,13 +3,14 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.services.role_intelligence_service import RoleIntelligenceService
 from app.services.skill_premium_service import SkillPremiumService
 from app.services.feedback_service import FeedbackService
 from app.services.execution_service import ExecutionService
+from app.dependencies.auth_dependency import get_current_user
 
 from app.models import (
     CareerProfileRequest,
@@ -23,6 +24,7 @@ from app.models import (
     CreateExecutionPlanRequest,
     UpdateExecutionTaskRequest,
     ExecutionPlanResponse,  
+    AuthenticatedUser,
 )
 
 from app.services.career_service import CareerService
@@ -354,3 +356,14 @@ def update_execution_task(task_id: str, request: UpdateExecutionTaskRequest):
         raise HTTPException(status_code=400, detail=result.message)
 
     return result
+
+@app.get(
+    "/api/auth/me",
+    response_model=AuthenticatedUser
+)
+def get_authenticated_user(
+    current_user: AuthenticatedUser = Depends(
+        get_current_user
+    )
+):
+    return current_user

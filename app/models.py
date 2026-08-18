@@ -212,4 +212,9 @@ class ExecutionPlanResponse(BaseModel):
     role_cluster: Optional[str] = None
     progress_percentage: float = 0
     tasks: List[ExecutionTaskResponse] = Field(default_factory=list)
-    message: str      
+    message: str
+
+class AuthenticatedUser(BaseModel):
+    user_id: str
+    email: Optional[str] = None
+    role: Optional[str] = None      
