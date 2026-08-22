@@ -1,5 +1,4 @@
 from typing import Any, Dict, List
-from urllib import response
 
 from app.models import CareerProfileRequest, CareerAnalysisResponse
 from app.services.ai_service import AIService
@@ -19,7 +18,11 @@ class CareerService:
         self.role_intelligence_service = RoleIntelligenceService()
         self.skill_premium_service = SkillPremiumService()
 
-    def analyze(self, profile: CareerProfileRequest) -> CareerAnalysisResponse:
+    def analyze(
+        self,
+        profile: CareerProfileRequest,
+        user_id: str,
+    ) -> CareerAnalysisResponse:
         role_intelligence = self.role_intelligence_service.map_role(profile)
 
         role_cluster = role_intelligence.primary_cluster
@@ -27,7 +30,7 @@ class CareerService:
         if role_intelligence.confidence == "Low" and role_cluster == "General IT":
             ai_cluster = self.ai_service.classify_role_cluster(
                 profile.current_role,
-                profile.skills
+                profile.skills,
             )
 
             if ai_cluster:
@@ -36,7 +39,7 @@ class CareerService:
         salary = self.salary_service.calculate_salary(
             profile=profile,
             role_cluster=role_cluster,
-            role_intelligence=role_intelligence
+            role_intelligence=role_intelligence,
         )
 
         role_intelligence_context = self.role_intelligence_service.build_prompt_context(
@@ -47,7 +50,7 @@ class CareerService:
             profile,
             salary,
             role_cluster,
-            role_intelligence_context
+            role_intelligence_context,
         )
 
         ai_result = self.ai_service.get_json_response(prompt)
@@ -66,7 +69,7 @@ class CareerService:
             role_cluster=role_cluster,
             top_skill_gaps=top_skill_gaps,
             target_roles=target_roles,
-            limit=6
+            limit=6,
         )
 
         response = CareerAnalysisResponse(
@@ -76,17 +79,17 @@ class CareerService:
             summary=self._get_string(
                 ai_result,
                 "summary",
-                "Career summary is not available for this analysis."
+                "Career summary is not available for this analysis.",
             ),
             recommended_next_move=self._get_string(
                 ai_result,
                 "recommended_next_move",
-                "Recommended next move is not available for this analysis."
+                "Recommended next move is not available for this analysis.",
             ),
             goal_strategy=self._get_string(
                 ai_result,
                 "goal_strategy",
-                f"The selected goal is {profile.goal}. The strategy should be aligned to this goal."
+                f"The selected goal is {profile.goal}. The strategy should be aligned to this goal.",
             ),
 
             salary_insight=salary,
@@ -104,13 +107,17 @@ class CareerService:
 
             confidence_notes=self._add_role_intelligence_confidence_note(
                 self._get_list(ai_result, "confidence_notes"),
-                role_intelligence
+                role_intelligence,
             ),
 
-            disclaimer="This is an AI-assisted estimate based on your profile and market patterns. It is not a guaranteed salary prediction."
+            disclaimer="This is an AI-assisted estimate based on your profile and market patterns. It is not a guaranteed salary prediction.",
         )
 
-        analysis_id = self.db_service.save_career_analysis(profile, response)
+        analysis_id = self.db_service.save_career_analysis(
+            profile=profile,
+            response=response,
+            user_id=user_id,
+        )
 
         if analysis_id:
             response.analysis_id = analysis_id
@@ -120,7 +127,7 @@ class CareerService:
     def _add_role_intelligence_confidence_note(
         self,
         notes: List[str],
-        role_intelligence
+        role_intelligence,
     ) -> List[str]:
         role_note = (
             f"Role mapping: your input role was matched to "

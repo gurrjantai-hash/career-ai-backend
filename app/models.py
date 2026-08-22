@@ -217,4 +217,21 @@ class ExecutionPlanResponse(BaseModel):
 class AuthenticatedUser(BaseModel):
     user_id: str
     email: Optional[str] = None
-    role: Optional[str] = None      
+    role: Optional[str] = None
+
+class CareerWorkspaceProfile(BaseModel):
+    current_role: str = ""
+    experience_years: Optional[float] = None
+    current_salary_lpa: Optional[float] = None
+    city: str = ""
+    skills: List[str] = Field(default_factory=list)
+    goal: str = "Increase salary"
+
+
+class LatestCareerWorkspaceResponse(BaseModel):
+    success: bool
+    has_analysis: bool = False
+    profile: Optional[CareerWorkspaceProfile] = None
+    analysis: Optional[CareerAnalysisResponse] = None
+    execution_plan: Optional[ExecutionPlanResponse] = None
+    message: str

@@ -6,13 +6,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.services.role_intelligence_service import RoleIntelligenceService
-from app.services.skill_premium_service import SkillPremiumService
-from app.services.feedback_service import FeedbackService
-from app.services.execution_service import ExecutionService
 from app.dependencies.auth_dependency import get_current_user
-
 from app.models import (
+    AuthenticatedUser,
     CareerProfileRequest,
     CareerAnalysisResponse,
     ResumeOptimizeRequest,
@@ -23,31 +19,35 @@ from app.models import (
     CareerFeedbackResponse,
     CreateExecutionPlanRequest,
     UpdateExecutionTaskRequest,
-    ExecutionPlanResponse,  
-    AuthenticatedUser,
+    ExecutionPlanResponse,
+    LatestCareerWorkspaceResponse,
 )
-
 from app.services.career_service import CareerService
-from app.services.resume_service import ResumeService
+from app.services.feedback_service import FeedbackService
 from app.services.learning_service import LearningService
+from app.services.resume_service import ResumeService
+from app.services.execution_service import ExecutionService
+from app.services.db_service import DBService
+from app.services.role_intelligence_service import RoleIntelligenceService
+from app.services.skill_premium_service import SkillPremiumService
 
 
 load_dotenv()
 
 
 app = FastAPI(
-    title="Career AI MVP",
+    title="Career AI",
     description="AI-powered career and income growth engine",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later for production
+    allow_origins=["*"],  # tighten before production deployment
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 
@@ -56,39 +56,168 @@ resume_service = ResumeService()
 learning_service = LearningService()
 feedback_service = FeedbackService()
 execution_service = ExecutionService()
+db_service = DBService()
+
 
 @app.get("/")
 def health_check():
-    return {"status": "Career AI MVP backend running"}
+    return {"status": "Career AI backend running"}
+
+
+@app.get(
+    "/api/auth/me",
+    response_model=AuthenticatedUser,
+)
+def get_authenticated_user(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    return current_user
+
+
+@app.get(
+    "/api/career/latest",
+    response_model=LatestCareerWorkspaceResponse,
+)
+def get_latest_career_workspace(
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    result = db_service.get_latest_career_workspace(
+        user_id=current_user.user_id,
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=500, detail=result.message)
+
+    if result.has_analysis and result.analysis and result.analysis.analysis_id:
+        execution_result = execution_service.get_execution_plan_by_analysis(
+            career_analysis_id=result.analysis.analysis_id,
+            user_id=current_user.user_id,
+        )
+
+        if execution_result.success:
+            result.execution_plan = execution_result
+
+    return result
 
 
 @app.post("/api/career/analyze", response_model=CareerAnalysisResponse)
-def analyze_career(profile: CareerProfileRequest):
+def analyze_career(
+    profile: CareerProfileRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     try:
-        return career_service.analyze(profile)
+        return career_service.analyze(
+            profile=profile,
+            user_id=current_user.user_id,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/resume/optimize", response_model=ResumeOptimizeResponse)
-def optimize_resume(request: ResumeOptimizeRequest):
+def optimize_resume(
+    request: ResumeOptimizeRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     try:
+        # Auth is intentionally required even though this endpoint does not yet persist data.
+        # This keeps the web app and future Android app on the same production auth boundary.
         return resume_service.optimize_resume(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/learning/plan", response_model=LearningPlanResponse)
-def generate_learning_plan(request: LearningPlanRequest):
+def generate_learning_plan(
+    request: LearningPlanRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
     try:
+        # Auth is intentionally required even though this endpoint does not yet persist data.
+        # This keeps the web app and future Android app on the same production auth boundary.
         return learning_service.generate_learning_plan(request)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/feedback", response_model=CareerFeedbackResponse)
+def save_feedback(
+    request: CareerFeedbackRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    result = feedback_service.save_feedback(
+        request=request,
+        user_id=current_user.user_id,
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    return result
+
+
+@app.post("/api/execution/plan", response_model=ExecutionPlanResponse)
+def create_execution_plan(
+    request: CreateExecutionPlanRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    result = execution_service.create_execution_plan(
+        career_analysis_id=request.career_analysis_id,
+        user_id=current_user.user_id,
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    return result
+
+
+@app.get(
+    "/api/execution/plan/{career_analysis_id}",
+    response_model=ExecutionPlanResponse,
+)
+def get_execution_plan(
+    career_analysis_id: str,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    result = execution_service.get_execution_plan_by_analysis(
+        career_analysis_id=career_analysis_id,
+        user_id=current_user.user_id,
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=404, detail=result.message)
+
+    return result
+
+
+@app.patch(
+    "/api/execution/tasks/{task_id}",
+    response_model=ExecutionPlanResponse,
+)
+def update_execution_task(
+    task_id: str,
+    request: UpdateExecutionTaskRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    result = execution_service.update_task_completion(
+        task_id=task_id,
+        is_completed=request.is_completed,
+        user_id=current_user.user_id,
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.message)
+
+    return result
+
+
+# Debug endpoints are still available for local validation.
+# Before production launch, protect these behind admin auth or disable them.
 @app.post("/debug/seed-role-embeddings")
 def seed_role_embeddings():
     from app.services.embedding_service import EmbeddingService
+
     service = EmbeddingService()
     return service.seed_role_title_embeddings()
 
@@ -96,10 +225,11 @@ def seed_role_embeddings():
 @app.get("/debug/search-role-embedding")
 def search_role_embedding(role: str):
     from app.services.embedding_service import EmbeddingService
+
     service = EmbeddingService()
     return {
         "input_role": role,
-        "matches": service.find_closest_role(role, limit=5)
+        "matches": service.find_closest_role(role, limit=5),
     }
 
 
@@ -120,8 +250,8 @@ def debug_skill_premium(payload: dict):
             role_cluster=payload.get("role_cluster"),
             top_skill_gaps=payload.get("top_skill_gaps", []),
             target_roles=payload.get("target_roles", []),
-            limit=6
-        )
+            limit=6,
+        ),
     }
 
 
@@ -133,7 +263,7 @@ def phase_2_health_check():
         return {
             "status": "error",
             "message": "DATABASE_URL is not configured",
-            "checks": {}
+            "checks": {},
         }
 
     try:
@@ -144,22 +274,22 @@ def phase_2_health_check():
 
         checks["canonical_roles_count"] = _get_table_count(
             cursor,
-            "canonical_roles"
+            "canonical_roles",
         )
 
         checks["role_title_embeddings_count"] = _get_table_count(
             cursor,
-            "role_title_embeddings"
+            "role_title_embeddings",
         )
 
         checks["salary_bands_v2_count"] = _get_table_count(
             cursor,
-            "salary_bands_v2"
+            "salary_bands_v2",
         )
 
         checks["skill_premium_matrix_count"] = _get_table_count(
             cursor,
-            "skill_premium_matrix"
+            "skill_premium_matrix",
         )
 
         checks["duplicate_skill_premium_count"] = _get_duplicate_skill_premium_count(
@@ -189,7 +319,7 @@ def phase_2_health_check():
             warnings.append("salary_bands_v2 table has no data")
 
         if checks["skill_premium_matrix_count"] == 0:
-            warnings.append("skill_premium_matrix table has no data")
+            warnings.append("skill_premium_matrix has no data")
 
         if checks["duplicate_skill_premium_count"] > 0:
             warnings.append("skill_premium_matrix has duplicate skill+cluster rows")
@@ -212,14 +342,14 @@ def phase_2_health_check():
             "status": "ok" if not warnings else "warning",
             "message": "Phase 2 health check completed",
             "warnings": warnings,
-            "checks": checks
+            "checks": checks,
         }
 
     except Exception as e:
         return {
             "status": "error",
             "message": str(e),
-            "checks": {}
+            "checks": {},
         }
 
 
@@ -287,7 +417,7 @@ def _get_skill_premium_cluster_counts(cursor):
         "Data Analytics",
         "Business Intelligence",
         "Backend Engineering",
-        "Full Stack Engineering"
+        "Full Stack Engineering",
     ]
 
     cursor.execute(
@@ -299,7 +429,7 @@ def _get_skill_premium_cluster_counts(cursor):
         where cluster = any(%s)
         group by cluster
         """,
-        (required_clusters,)
+        (required_clusters,),
     )
 
     rows = cursor.fetchall()
@@ -311,59 +441,7 @@ def _get_skill_premium_cluster_counts(cursor):
     return [
         {
             "cluster": cluster,
-            "row_count": existing_counts.get(cluster, 0)
+            "row_count": existing_counts.get(cluster, 0),
         }
         for cluster in required_clusters
     ]
-
-@app.post("/api/feedback", response_model=CareerFeedbackResponse)
-def save_feedback(request: CareerFeedbackRequest):
-    result = feedback_service.save_feedback(request)
-
-    if not result.success:
-        raise HTTPException(status_code=500, detail=result.message)
-
-    return result
-
-@app.post("/api/execution/plan", response_model=ExecutionPlanResponse)
-def create_execution_plan(request: CreateExecutionPlanRequest):
-    result = execution_service.create_execution_plan(request.career_analysis_id)
-
-    if not result.success:
-        raise HTTPException(status_code=400, detail=result.message)
-
-    return result
-
-
-@app.get("/api/execution/plan/{career_analysis_id}", response_model=ExecutionPlanResponse)
-def get_execution_plan(career_analysis_id: str):
-    result = execution_service.get_execution_plan_by_analysis(career_analysis_id)
-
-    if not result.success:
-        raise HTTPException(status_code=404, detail=result.message)
-
-    return result
-
-
-@app.patch("/api/execution/tasks/{task_id}", response_model=ExecutionPlanResponse)
-def update_execution_task(task_id: str, request: UpdateExecutionTaskRequest):
-    result = execution_service.update_task_completion(
-        task_id=task_id,
-        is_completed=request.is_completed
-    )
-
-    if not result.success:
-        raise HTTPException(status_code=400, detail=result.message)
-
-    return result
-
-@app.get(
-    "/api/auth/me",
-    response_model=AuthenticatedUser
-)
-def get_authenticated_user(
-    current_user: AuthenticatedUser = Depends(
-        get_current_user
-    )
-):
-    return current_user

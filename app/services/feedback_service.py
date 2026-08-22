@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from app.models import CareerFeedbackRequest, CareerFeedbackResponse
 
+
 load_dotenv()
 
 
@@ -15,22 +16,53 @@ class FeedbackService:
 
     def save_feedback(
         self,
-        request: CareerFeedbackRequest
+        request: CareerFeedbackRequest,
+        user_id: str,
     ) -> CareerFeedbackResponse:
         if not self.database_url:
             return CareerFeedbackResponse(
                 success=False,
                 feedback_id=None,
-                message="DATABASE_URL is not configured."
+                message="DATABASE_URL is not configured.",
+            )
+
+        if not user_id:
+            return CareerFeedbackResponse(
+                success=False,
+                feedback_id=None,
+                message="Authenticated user_id is missing.",
             )
 
         try:
             connection = psycopg2.connect(self.database_url)
             cursor = connection.cursor()
 
+            career_analysis_id = self._clean_text(request.career_analysis_id)
+
+            if career_analysis_id:
+                cursor.execute(
+                    """
+                    select id
+                    from career_analyses
+                    where id = %s
+                      and user_id = %s
+                    """,
+                    (career_analysis_id, user_id),
+                )
+
+                if not cursor.fetchone():
+                    cursor.close()
+                    connection.close()
+                    return CareerFeedbackResponse(
+                        success=False,
+                        feedback_id=None,
+                        message="Career analysis not found for current user.",
+                    )
+
             cursor.execute(
                 """
                 insert into career_feedback (
+                    user_id,
                     career_analysis_id,
                     user_current_role,
                     detected_role_cluster,
@@ -46,12 +78,13 @@ class FeedbackService:
                     feedback_comment
                 )
                 values (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 returning id
                 """,
                 (
-                    request.career_analysis_id,
+                    user_id,
+                    career_analysis_id,
                     self._clean_text(request.user_current_role),
                     self._clean_text(request.detected_role_cluster),
                     request.user_experience_years,
@@ -64,7 +97,7 @@ class FeedbackService:
                     request.overall_rating,
                     self._clean_text(request.would_pay),
                     self._clean_text(request.feedback_comment),
-                )
+                ),
             )
 
             feedback_id = cursor.fetchone()[0]
@@ -76,14 +109,14 @@ class FeedbackService:
             return CareerFeedbackResponse(
                 success=True,
                 feedback_id=feedback_id,
-                message="Feedback saved successfully."
+                message="Feedback saved successfully.",
             )
 
         except Exception as e:
             return CareerFeedbackResponse(
                 success=False,
                 feedback_id=None,
-                message=f"Failed to save feedback: {str(e)}"
+                message=f"Failed to save feedback: {str(e)}",
             )
 
     def _clean_text(self, value: Optional[str]) -> Optional[str]:
