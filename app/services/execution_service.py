@@ -1,6 +1,6 @@
 import os
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -20,6 +20,7 @@ class ExecutionService:
         self,
         career_analysis_id: str,
         user_id: str,
+        target_role: Optional[str] = None,
     ) -> ExecutionPlanResponse:
         if not self.database_url:
             return ExecutionPlanResponse(
@@ -37,43 +38,11 @@ class ExecutionService:
             connection = psycopg2.connect(self.database_url)
             cursor = connection.cursor(cursor_factory=RealDictCursor)
 
-            existing_plan = self._get_existing_plan(
+            analysis = self._get_analysis_for_user(
                 cursor=cursor,
                 career_analysis_id=career_analysis_id,
                 user_id=user_id,
             )
-
-            if existing_plan:
-                response = self._build_plan_response(
-                    cursor=cursor,
-                    execution_plan_id=existing_plan["id"],
-                    user_id=user_id,
-                    message="Execution plan already exists.",
-                )
-                cursor.close()
-                connection.close()
-                return response
-
-            cursor.execute(
-                """
-                select
-                    id,
-                    currentrole,
-                    role_cluster,
-                    target_roles,
-                    top_skill_gaps,
-                    resume_suggestions,
-                    skill_premium_insights,
-                    growth_paths,
-                    goal
-                from career_analyses
-                where id = %s
-                  and user_id = %s
-                """,
-                (career_analysis_id, user_id),
-            )
-
-            analysis = cursor.fetchone()
 
             if not analysis:
                 cursor.close()
@@ -84,11 +53,32 @@ class ExecutionService:
                 )
 
             target_roles = self._safe_json(analysis.get("target_roles"))
-            target_role = self._first_text(target_roles) or analysis.get("currentrole")
+            selected_target_role = self._safe_text(
+                target_role or self._first_text(target_roles) or analysis.get("currentrole"),
+                "your target role",
+            )
+
+            existing_plan = self._get_existing_plan(
+                cursor=cursor,
+                career_analysis_id=career_analysis_id,
+                user_id=user_id,
+                target_role=selected_target_role,
+            )
+
+            if existing_plan:
+                response = self._build_plan_response(
+                    cursor=cursor,
+                    execution_plan_id=existing_plan["id"],
+                    user_id=user_id,
+                    message="Execution plan already exists for this target role.",
+                )
+                cursor.close()
+                connection.close()
+                return response
 
             task_rows = self._analysis_to_action_tasks(
                 analysis=analysis,
-                target_role=target_role,
+                target_role=selected_target_role,
             )
 
             if not task_rows:
@@ -115,7 +105,7 @@ class ExecutionService:
                 (
                     user_id,
                     analysis.get("id"),
-                    target_role,
+                    selected_target_role,
                     analysis.get("role_cluster"),
                 ),
             )
@@ -168,6 +158,7 @@ class ExecutionService:
         self,
         career_analysis_id: str,
         user_id: str,
+        target_role: Optional[str] = None,
     ) -> ExecutionPlanResponse:
         if not self.database_url:
             return ExecutionPlanResponse(
@@ -189,6 +180,7 @@ class ExecutionService:
                 cursor=cursor,
                 career_analysis_id=career_analysis_id,
                 user_id=user_id,
+                target_role=target_role,
             )
 
             if not existing_plan:
@@ -196,7 +188,7 @@ class ExecutionService:
                 connection.close()
                 return ExecutionPlanResponse(
                     success=False,
-                    message="Execution plan not found for current user.",
+                    message="Execution plan not found for current user and target role.",
                 )
 
             response = self._build_plan_response(
@@ -217,6 +209,52 @@ class ExecutionService:
                 success=False,
                 message=str(e),
             )
+
+    def get_execution_plans_by_analysis(
+        self,
+        career_analysis_id: str,
+        user_id: str,
+    ) -> List[ExecutionPlanResponse]:
+        if not self.database_url or not user_id:
+            return []
+
+        try:
+            connection = psycopg2.connect(self.database_url)
+            cursor = connection.cursor(cursor_factory=RealDictCursor)
+
+            cursor.execute(
+                """
+                select id
+                from career_execution_plans
+                where career_analysis_id = %s
+                  and user_id = %s
+                order by updated_at desc nulls last, created_at desc
+                """,
+                (career_analysis_id, user_id),
+            )
+
+            plan_rows = cursor.fetchall()
+            responses = []
+
+            for plan_row in plan_rows:
+                response = self._build_plan_response(
+                    cursor=cursor,
+                    execution_plan_id=plan_row["id"],
+                    user_id=user_id,
+                    message="Execution plan found.",
+                )
+
+                if response.success:
+                    responses.append(response)
+
+            cursor.close()
+            connection.close()
+
+            return responses
+
+        except Exception as e:
+            print(f"Failed to fetch execution plans: {e}")
+            return []
 
     def update_task_completion(
         self,
@@ -347,7 +385,7 @@ class ExecutionService:
                 message=str(e),
             )
 
-    def _get_existing_plan(
+    def _get_analysis_for_user(
         self,
         cursor,
         career_analysis_id: str,
@@ -355,10 +393,55 @@ class ExecutionService:
     ):
         cursor.execute(
             """
+            select
+                id,
+                currentrole,
+                role_cluster,
+                target_roles,
+                top_skill_gaps,
+                resume_suggestions,
+                skill_premium_insights,
+                growth_paths,
+                goal
+            from career_analyses
+            where id = %s
+              and user_id = %s
+            """,
+            (career_analysis_id, user_id),
+        )
+
+        return cursor.fetchone()
+
+    def _get_existing_plan(
+        self,
+        cursor,
+        career_analysis_id: str,
+        user_id: str,
+        target_role: Optional[str] = None,
+    ):
+        if target_role and str(target_role).strip():
+            cursor.execute(
+                """
+                select id
+                from career_execution_plans
+                where career_analysis_id = %s
+                  and user_id = %s
+                  and lower(trim(coalesce(target_role, ''))) = lower(trim(%s))
+                order by updated_at desc nulls last, created_at desc
+                limit 1
+                """,
+                (career_analysis_id, user_id, str(target_role).strip()),
+            )
+            return cursor.fetchone()
+
+        cursor.execute(
+            """
             select id
             from career_execution_plans
             where career_analysis_id = %s
               and user_id = %s
+            order by updated_at desc nulls last, created_at desc
+            limit 1
             """,
             (career_analysis_id, user_id),
         )

@@ -189,6 +189,7 @@ class CareerFeedbackResponse(BaseModel):
 
 class CreateExecutionPlanRequest(BaseModel):
     career_analysis_id: str
+    target_role: Optional[str] = None
 
 
 class UpdateExecutionTaskRequest(BaseModel):
@@ -234,4 +235,5 @@ class LatestCareerWorkspaceResponse(BaseModel):
     profile: Optional[CareerWorkspaceProfile] = None
     analysis: Optional[CareerAnalysisResponse] = None
     execution_plan: Optional[ExecutionPlanResponse] = None
+    execution_plans: List[ExecutionPlanResponse] = Field(default_factory=list)
     message: str

@@ -1,3 +1,4 @@
+from typing import Optional
 import os
 
 import psycopg2
@@ -89,13 +90,16 @@ def get_latest_career_workspace(
         raise HTTPException(status_code=500, detail=result.message)
 
     if result.has_analysis and result.analysis and result.analysis.analysis_id:
-        execution_result = execution_service.get_execution_plan_by_analysis(
+        execution_results = execution_service.get_execution_plans_by_analysis(
             career_analysis_id=result.analysis.analysis_id,
             user_id=current_user.user_id,
         )
 
-        if execution_result.success:
-            result.execution_plan = execution_result
+        result.execution_plans = execution_results
+
+        # Backward compatibility for existing frontend response handling.
+        if execution_results:
+            result.execution_plan = execution_results[0]
 
     return result
 
@@ -164,6 +168,7 @@ def create_execution_plan(
     result = execution_service.create_execution_plan(
         career_analysis_id=request.career_analysis_id,
         user_id=current_user.user_id,
+        target_role=request.target_role,
     )
 
     if not result.success:
@@ -178,11 +183,13 @@ def create_execution_plan(
 )
 def get_execution_plan(
     career_analysis_id: str,
+    target_role: Optional[str] = None,
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
     result = execution_service.get_execution_plan_by_analysis(
         career_analysis_id=career_analysis_id,
         user_id=current_user.user_id,
+        target_role=target_role,
     )
 
     if not result.success:
