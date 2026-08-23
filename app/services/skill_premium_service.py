@@ -1,21 +1,28 @@
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+
+from app.models import SkillPremiumInsight
+
 
 load_dotenv()
 
 
 class SkillPremiumService:
     """
-    Phase 2D Skill Premium Service.
+    Product-aligned Skill Premium Engine.
 
-    Purpose:
-    - Rank missing skills by salary/career premium
-    - Use DB-backed skill_premium_matrix
-    - Help roadmap, learning plan, salary impact, and future course recommendations
+    This service ranks skills by career ROI for the user's resolved role cluster.
+    It should not behave like a generic skill display. It must answer:
+    "Which skills should this user build because they improve salary, role fit,
+    seniority signal, interview strength, and practical proof?"
+
+    DB rows from skill_premium_matrix are supported, but the product catalog below
+    is treated as the safer baseline so missing/weak DB rows do not produce generic
+    5/10 recommendations for important senior skills.
     """
 
     def __init__(self):
@@ -25,165 +32,631 @@ class SkillPremiumService:
         self,
         role_cluster: str,
         top_skill_gaps: List[str],
-        target_roles: List[str] | None = None,
-        limit: int = 6
-    ) -> List[Dict[str, Any]]:
-        if not role_cluster or not top_skill_gaps:
-            return []
+        target_roles: List[str],
+        limit: int = 6,
+        experience_years: Optional[float] = None,
+        career_goal: Optional[str] = None,
+    ) -> List[SkillPremiumInsight]:
+        cluster = self._normalize_cluster(role_cluster)
+        gaps = self._normalize_list(top_skill_gaps)
+        roles = self._normalize_list(target_roles)
 
-        premium_rows = self._load_skill_premium_rows(role_cluster)
+        catalog = self._cluster_catalog(cluster)
+        db_rows = self._load_db_rows(cluster, gaps)
 
-        if not premium_rows:
-            return self._fallback_skill_premium(top_skill_gaps, limit)
-
-        ranked_skills = []
-
-        for skill in top_skill_gaps:
-            matched_row = self._find_matching_premium_row(skill, premium_rows)
-
-            if matched_row:
-                ranked_skills.append(
-                    {
-                        "skill_name": skill,
-                        "premium_score": float(matched_row.get("premium_score") or 5),
-                        "market_relevance": matched_row.get("market_relevance") or "Medium",
-                        "learning_difficulty": matched_row.get("learning_difficulty") or "Medium",
-                        "proof_required": matched_row.get("proof_required") or "Build a small practical project or interview-ready example.",
-                        "priority": self._priority_from_score(
-                            float(matched_row.get("premium_score") or 5)
-                        ),
-                        "source": "skill_premium_matrix"
-                    }
-                )
-            else:
-                ranked_skills.append(
-                    {
-                        "skill_name": skill,
-                        "premium_score": 5.0,
-                        "market_relevance": "Medium",
-                        "learning_difficulty": "Medium",
-                        "proof_required": "Build a small practical project or prepare interview-ready examples.",
-                        "priority": "Medium",
-                        "source": "fallback"
-                    }
-                )
-
-        ranked_skills.sort(
-            key=lambda item: (
-                item["premium_score"],
-                self._difficulty_rank(item["learning_difficulty"])
-            ),
-            reverse=True
+        candidates = self._build_candidates(
+            cluster=cluster,
+            top_skill_gaps=gaps,
+            target_roles=roles,
+            catalog=catalog,
+            limit=limit,
         )
 
-        return ranked_skills[:limit]
+        insights: List[SkillPremiumInsight] = []
+        seen = set()
 
-    def _load_skill_premium_rows(self, role_cluster: str) -> List[Dict[str, Any]]:
-        if not self.database_url:
-            return []
+        for skill in candidates:
+            canonical_skill = self._canonical_skill_name(skill, catalog)
+            key = canonical_skill.lower().strip()
+            if not key or key in seen:
+                continue
+
+            seen.add(key)
+            metadata = self._metadata_for_skill(
+                skill_name=canonical_skill,
+                cluster=cluster,
+                catalog=catalog,
+                db_rows=db_rows,
+                target_roles=roles,
+                experience_years=experience_years,
+                career_goal=career_goal,
+            )
+
+            insights.append(
+                SkillPremiumInsight(
+                    skill_name=canonical_skill,
+                    premium_score=float(metadata["premium_score"]),
+                    market_relevance=metadata["market_relevance"],
+                    learning_difficulty=metadata["learning_difficulty"],
+                    proof_required=metadata["proof_required"],
+                    priority=self._priority(float(metadata["premium_score"])),
+                    source=metadata["source"],
+                )
+            )
+
+        insights.sort(
+            key=lambda item: (
+                self._candidate_order(item.skill_name, candidates),
+                -float(item.premium_score),
+            )
+        )
+
+        return insights[: max(1, int(limit or 6))]
+
+    def _build_candidates(
+        self,
+        cluster: str,
+        top_skill_gaps: List[str],
+        target_roles: List[str],
+        catalog: Dict[str, Dict[str, Any]],
+        limit: int,
+    ) -> List[str]:
+        candidates = []
+
+        # Skill gaps generated by career guardrails should come first.
+        candidates.extend(top_skill_gaps)
+
+        role_text = " ".join(target_roles).lower()
+
+        # Add senior/lead/backend-specific skills if target role direction demands it.
+        if cluster in ["Backend Engineering", "Full Stack Engineering"]:
+            if any(word in role_text for word in ["lead", "technical lead", "architect", "staff", "principal"]):
+                candidates.extend([
+                    "System Design",
+                    "Architecture Decision Making",
+                    "Technical Leadership",
+                    "Kafka / Event-driven Architecture",
+                    "Database Optimization",
+                    "Cloud Deployment",
+                ])
+            else:
+                candidates.extend([
+                    "System Design",
+                    "Kafka / Event-driven Architecture",
+                    "Spring Security / OAuth2",
+                    "Database Optimization",
+                    "Cloud Deployment",
+                ])
+
+        # Fill remaining slots from role-cluster catalog.
+        candidates.extend(list(catalog.keys()))
+
+        # Preserve order and allow a little buffer before final sort/slice.
+        return self._dedupe_keep_order(candidates)[: max(12, int(limit or 6) * 2)]
+
+    def _metadata_for_skill(
+        self,
+        skill_name: str,
+        cluster: str,
+        catalog: Dict[str, Dict[str, Any]],
+        db_rows: Dict[str, Dict[str, Any]],
+        target_roles: List[str],
+        experience_years: Optional[float],
+        career_goal: Optional[str],
+    ) -> Dict[str, Any]:
+        key = self._normalize_skill_key(skill_name)
+        catalog_row = catalog.get(skill_name) or catalog.get(key)
+        db_row = db_rows.get(key)
+
+        if catalog_row:
+            metadata = dict(catalog_row)
+            metadata.setdefault("source", "product_skill_premium_catalog")
+
+            # Let strong DB rows improve proof text, but do not allow weak generic 5/10 rows
+            # to downgrade product-critical skills such as Architecture Decision Making.
+            if db_row:
+                db_score = self._safe_float(db_row.get("premium_score"), 0)
+                current_score = self._safe_float(metadata.get("premium_score"), 0)
+                if db_score > current_score:
+                    metadata["premium_score"] = db_score
+                    metadata["market_relevance"] = str(db_row.get("market_relevance") or metadata["market_relevance"])
+                    metadata["learning_difficulty"] = str(db_row.get("learning_difficulty") or metadata["learning_difficulty"])
+                    metadata["proof_required"] = str(db_row.get("proof_required") or metadata["proof_required"])
+                    metadata["source"] = "skill_premium_matrix"
+
+            return metadata
+
+        if db_row:
+            score = max(self._safe_float(db_row.get("premium_score"), 0), 6.5)
+            return {
+                "premium_score": score,
+                "market_relevance": str(db_row.get("market_relevance") or "Medium/High"),
+                "learning_difficulty": str(db_row.get("learning_difficulty") or "Medium"),
+                "proof_required": str(db_row.get("proof_required") or self._default_proof(skill_name, cluster)),
+                "source": "skill_premium_matrix",
+            }
+
+        return self._infer_metadata(skill_name, cluster, target_roles, experience_years, career_goal)
+
+    def _load_db_rows(self, cluster: str, skills: List[str]) -> Dict[str, Dict[str, Any]]:
+        if not self.database_url or not skills:
+            return {}
 
         try:
             connection = psycopg2.connect(self.database_url)
             cursor = connection.cursor(cursor_factory=RealDictCursor)
-
             cursor.execute(
                 """
                 select
                     skill_name,
-                    cluster,
                     premium_score,
                     market_relevance,
                     learning_difficulty,
                     proof_required
                 from skill_premium_matrix
-                where lower(cluster) = lower(%s)
-                order by premium_score desc
+                where lower(trim(cluster)) = lower(trim(%s))
+                  and lower(trim(skill_name)) = any(%s)
                 """,
-                (role_cluster,)
+                (
+                    cluster,
+                    [self._normalize_skill_key(skill) for skill in skills],
+                ),
             )
-
             rows = cursor.fetchall()
-
             cursor.close()
             connection.close()
 
-            return [dict(row) for row in rows]
+            return {
+                self._normalize_skill_key(row.get("skill_name")): dict(row)
+                for row in rows
+                if row.get("skill_name")
+            }
 
-        except Exception as e:
-            print(f"Failed to load skill premium rows for {role_cluster}: {e}")
-            return []
+        except Exception as exc:
+            print(f"Skill premium DB lookup failed: {exc}")
+            return {}
 
-    def _find_matching_premium_row(
-        self,
-        skill: str,
-        premium_rows: List[Dict[str, Any]]
-    ) -> Dict[str, Any] | None:
-        normalized_skill = self._normalize_text(skill)
-
-        for row in premium_rows:
-            row_skill = self._normalize_text(str(row.get("skill_name", "")))
-
-            if normalized_skill == row_skill:
-                return row
-
-        for row in premium_rows:
-            row_skill = self._normalize_text(str(row.get("skill_name", "")))
-
-            if normalized_skill in row_skill or row_skill in normalized_skill:
-                return row
-
-        return None
-
-    def _fallback_skill_premium(
-        self,
-        top_skill_gaps: List[str],
-        limit: int
-    ) -> List[Dict[str, Any]]:
-        result = []
-
-        for skill in top_skill_gaps[:limit]:
-            result.append(
-                {
-                    "skill_name": skill,
-                    "premium_score": 5.0,
-                    "market_relevance": "Medium",
+    def _cluster_catalog(self, cluster: str) -> Dict[str, Dict[str, Any]]:
+        catalogs: Dict[str, Dict[str, Dict[str, Any]]] = {
+            "Backend Engineering": {
+                "System Design": {
+                    "premium_score": 9.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Design scalable APIs, database models, caching, queues, failure handling and trade-offs for one real backend system.",
+                },
+                "Kafka / Event-driven Architecture": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Build or document an event-driven flow with producer, consumer, retries, idempotency and failure handling.",
+                },
+                "Architecture Decision Making": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Hard",
+                    "proof_required": "Prepare 2-3 architecture decision records explaining trade-offs, scalability, security, cost and operational impact.",
+                },
+                "Database Optimization": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
                     "learning_difficulty": "Medium",
-                    "proof_required": "Build a small practical project or prepare interview-ready examples.",
-                    "priority": "Medium",
-                    "source": "fallback"
-                }
-            )
+                    "proof_required": "Show query optimization, indexing, transaction handling, schema decisions and before/after performance examples.",
+                },
+                "Spring Security / OAuth2": {
+                    "premium_score": 7.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Implement JWT/OAuth2 security, role-based access and secure API flows in a Spring Boot project.",
+                },
+                "Docker and Kubernetes Basics": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Containerize a Spring Boot service and deploy it with basic Kubernetes manifests or a simple cloud deployment flow.",
+                },
+                "Cloud Deployment": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Deploy a backend service with environment config, logs, health checks, database connectivity and rollback notes.",
+                },
+                "Technical Leadership": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Document examples of design ownership, mentoring, code-review standards, delivery decisions and cross-team collaboration.",
+                },
+            },
+            "Full Stack Engineering": {
+                "System Design": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Design an end-to-end product feature with frontend, backend, database, APIs, auth, scaling and failure scenarios.",
+                },
+                "TypeScript": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Convert a real UI/API flow to TypeScript with typed components, services and error states.",
+                },
+                "API Design": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Design clean REST APIs with validation, pagination, error handling, auth and API documentation.",
+                },
+                "Cloud Deployment": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Deploy a full-stack app with frontend, backend, database and environment configuration.",
+                },
+            },
+            "Frontend Engineering": {
+                "TypeScript": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Build typed React components, forms and API integration with clean error/loading states.",
+                },
+                "Frontend Performance": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Optimize bundle, rendering, images and Core Web Vitals with before/after measurements.",
+                },
+                "Testing Strategy": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Add unit/component/E2E tests for critical user flows and document test coverage decisions.",
+                },
+                "Design Systems": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Create reusable components, tokens and usage documentation for a small design system.",
+                },
+            },
+            "Testing/QA": {
+                "API Testing": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Create Postman/API test cases covering auth, validation, error codes and data checks.",
+                },
+                "Java/Python Foundation": {
+                    "premium_score": 7.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Write simple programs using loops, functions, classes and basic debugging before automation-heavy work.",
+                },
+                "Selenium Basics": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Automate 2-3 realistic UI scenarios with locators, waits, assertions and test data.",
+                },
+                "Automation Framework Design": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Hard",
+                    "proof_required": "Build a small framework with page objects, reusable utilities, reports and CI execution.",
+                },
+            },
+            "API Testing": {
+                "RestAssured": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Build API automation tests with auth, assertions, reusable request specs and reporting.",
+                },
+                "SQL Validation": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Validate API responses against database records and document positive/negative scenarios.",
+                },
+                "Newman / CI Execution": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Run API collections through Newman or CI and publish simple execution reports.",
+                },
+                "API Automation Framework": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Hard",
+                    "proof_required": "Build a small framework with reusable clients, data management, reports and CI integration.",
+                },
+            },
+            "Application Support": {
+                "Log Analysis Depth": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Prepare RCA examples using logs, correlation IDs, errors, timelines and permanent fixes.",
+                },
+                "Shell Scripting": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Automate one repetitive support task with shell script and document time saved or risk reduced.",
+                },
+                "Observability": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Create dashboards/alerts and explain how metrics, logs and traces reduce incident time.",
+                },
+                "Cloud Operations": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Show cloud troubleshooting examples around IAM, networking, deployment, monitoring and logs.",
+                },
+            },
+            "Cloud Engineering": {
+                "Kubernetes": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Hard",
+                    "proof_required": "Deploy a service with pods, services, config, probes and basic troubleshooting notes.",
+                },
+                "Terraform": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Provision simple cloud infrastructure with variables, state explanation and safe change workflow.",
+                },
+                "Cloud Monitoring": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Create monitoring/alerting examples and explain incident detection and response steps.",
+                },
+                "Cloud Security Basics": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Document IAM, least privilege, network rules, secrets handling and basic audit controls.",
+                },
+            },
+            "DevOps": {
+                "Kubernetes": {
+                    "premium_score": 9.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Hard",
+                    "proof_required": "Deploy and troubleshoot services using config, probes, scaling, logs and rollout commands.",
+                },
+                "Terraform": {
+                    "premium_score": 8.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Create reusable infrastructure modules with variables, state and safe plan/apply workflow.",
+                },
+                "Observability": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Set up logs, metrics, alerts and incident notes for one service.",
+                },
+                "SRE Practices": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Hard",
+                    "proof_required": "Prepare SLO/error-budget, incident review and reliability improvement examples.",
+                },
+            },
+            "Business Analysis": {
+                "Stakeholder Management": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Document examples of resolving requirement conflicts, scope decisions and stakeholder alignment.",
+                },
+                "Product Metrics": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Create a case study connecting requirements to conversion, retention, revenue or operational KPIs.",
+                },
+                "SQL Basics": {
+                    "premium_score": 7.0,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Write basic queries for filters, joins and aggregates to support data-backed requirements.",
+                },
+                "Process Mapping": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Create current-state and future-state process maps with bottlenecks and measurable improvements.",
+                },
+            },
+            "Data Analytics": {
+                "Python/Pandas": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Analyze a dataset with cleaning, joins, grouping and insight summary using pandas.",
+                },
+                "Statistics": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Explain distributions, correlation, hypothesis testing or experiment results with examples.",
+                },
+                "Dashboard Storytelling": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Build a dashboard that clearly explains business problem, insight, action and impact.",
+                },
+                "Data Modeling": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Design fact/dimension tables or analytical models and explain query/reporting benefits.",
+                },
+            },
+        }
 
-        return result
+        if cluster in catalogs:
+            return catalogs[cluster]
 
-    def _priority_from_score(self, score: float) -> str:
-        if score >= 8:
+        # Common fallback for less-covered clusters; this prevents empty cards but keeps them realistic.
+        return {
+            "Role-specific Depth": {
+                "premium_score": 7.0,
+                "market_relevance": "Medium/High",
+                "learning_difficulty": "Medium",
+                "proof_required": "Build proof around the highest-value skill expected in the target role.",
+            },
+            "Interview-ready Project Proof": {
+                "premium_score": 7.0,
+                "market_relevance": "Medium/High",
+                "learning_difficulty": "Medium",
+                "proof_required": "Prepare one project or case study that proves role readiness with clear decisions and outcomes.",
+            },
+            "Resume Positioning": {
+                "premium_score": 6.5,
+                "market_relevance": "Medium",
+                "learning_difficulty": "Easy/Medium",
+                "proof_required": "Rewrite bullets to show ownership, tools, measurable impact and role-specific keywords.",
+            },
+        }
+
+    def _infer_metadata(
+        self,
+        skill_name: str,
+        cluster: str,
+        target_roles: List[str],
+        experience_years: Optional[float],
+        career_goal: Optional[str],
+    ) -> Dict[str, Any]:
+        text = f"{skill_name} {cluster} {' '.join(target_roles)} {career_goal or ''}".lower()
+        score = 6.5
+        relevance = "Medium/High"
+        difficulty = "Medium"
+
+        if any(word in text for word in ["system design", "architecture", "kafka", "event", "kubernetes", "terraform", "security", "performance", "optimization", "leadership"]):
+            score = 8.0
+            relevance = "High"
+            difficulty = "Medium/Hard"
+
+        if any(word in text for word in ["basics", "foundation", "fundamentals"]):
+            score = 7.0
+            relevance = "Medium/High"
+            difficulty = "Medium"
+
+        return {
+            "premium_score": score,
+            "market_relevance": relevance,
+            "learning_difficulty": difficulty,
+            "proof_required": self._default_proof(skill_name, cluster),
+            "source": "product_inferred_skill_premium",
+        }
+
+    def _default_proof(self, skill_name: str, cluster: str) -> str:
+        return (
+            f"Build a practical proof or case-study showing how {skill_name} applies to "
+            f"real {cluster} work, including decisions, trade-offs and interview-ready examples."
+        )
+
+    def _candidate_order(self, skill_name: str, candidates: List[str]) -> int:
+        key = self._normalize_skill_key(skill_name)
+        for index, candidate in enumerate(candidates):
+            if self._normalize_skill_key(candidate) == key:
+                return index
+        return 999
+
+    def _canonical_skill_name(self, skill_name: str, catalog: Dict[str, Dict[str, Any]]) -> str:
+        cleaned = str(skill_name or "").strip()
+        if not cleaned:
+            return "Role-specific Depth"
+
+        normalized = self._normalize_skill_key(cleaned)
+        for catalog_skill in catalog.keys():
+            if self._normalize_skill_key(catalog_skill) == normalized:
+                return catalog_skill
+
+        synonyms = {
+            "event driven architecture": "Kafka / Event-driven Architecture",
+            "event-driven architecture": "Kafka / Event-driven Architecture",
+            "kafka": "Kafka / Event-driven Architecture",
+            "cloud": "Cloud Deployment",
+            "aws cloud": "Cloud Deployment",
+            "cloud deployment": "Cloud Deployment",
+            "docker kubernetes": "Docker and Kubernetes Basics",
+            "docker and kubernetes": "Docker and Kubernetes Basics",
+            "oauth2": "Spring Security / OAuth2",
+            "spring security": "Spring Security / OAuth2",
+            "db optimization": "Database Optimization",
+            "database performance": "Database Optimization",
+            "tech leadership": "Technical Leadership",
+        }
+
+        synonym = synonyms.get(normalized)
+        if synonym and synonym in catalog:
+            return synonym
+
+        return cleaned
+
+    def _priority(self, score: float) -> str:
+        if score >= 8.0:
             return "High"
-        if score >= 6:
+        if score >= 6.5:
             return "Medium"
         return "Low"
 
-    def _difficulty_rank(self, difficulty: str) -> int:
-        normalized = self._normalize_text(difficulty)
+    def _normalize_cluster(self, cluster: str) -> str:
+        text = str(cluster or "General IT").strip()
+        mapping = {
+            "Testing QA": "Testing/QA",
+            "Testing/QA": "Testing/QA",
+            "Backend": "Backend Engineering",
+            "Frontend": "Frontend Engineering",
+            "Full Stack": "Full Stack Engineering",
+            "Cloud": "Cloud Engineering",
+            "Data": "Data Analytics",
+        }
+        return mapping.get(text, text)
 
-        if "hard" in normalized:
-            return 3
-        if "medium" in normalized:
-            return 2
-        if "easy" in normalized:
-            return 1
+    def _normalize_list(self, value: Any) -> List[str]:
+        if not isinstance(value, list):
+            return []
+        result = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                result.append(item.strip())
+            elif isinstance(item, dict):
+                label = item.get("skill_name") or item.get("target_role") or item.get("name")
+                if label:
+                    result.append(str(label).strip())
+        return self._dedupe_keep_order(result)
 
-        return 2
+    def _dedupe_keep_order(self, values: List[str]) -> List[str]:
+        seen = set()
+        result = []
+        for value in values:
+            cleaned = str(value or "").strip()
+            if not cleaned:
+                continue
+            key = self._normalize_skill_key(cleaned)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(cleaned)
+        return result
 
-    def _normalize_text(self, text: str) -> str:
-        if not text:
-            return ""
+    def _normalize_skill_key(self, value: Any) -> str:
+        return " ".join(str(value or "").lower().replace("/", " ").replace("-", " ").split())
 
-        return (
-            text.lower()
-            .replace("/", " ")
-            .replace("-", " ")
-            .replace("_", " ")
-            .replace("&", " and ")
-            .strip()
-        )
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except Exception:
+            return default
