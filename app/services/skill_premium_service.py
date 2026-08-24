@@ -476,6 +476,96 @@ class SkillPremiumService:
                     "proof_required": "Create current-state and future-state process maps with bottlenecks and measurable improvements.",
                 },
             },
+            "Customer Support / BPO": {
+                "Escalation Management": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Document 3 difficult customer escalations handled with resolution steps, ownership, SLA impact and customer outcome.",
+                },
+                "SLA Ownership": {
+                    "premium_score": 7.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Show examples of meeting response/resolution SLA, reducing reopen rate, or improving escalation closure quality.",
+                },
+                "Customer Retention": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Prepare examples where you saved customers, reduced complaints, improved CSAT, or protected revenue.",
+                },
+                "Call Quality Improvement": {
+                    "premium_score": 7.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Show quality score improvement with audit feedback, script adherence, empathy, probing and resolution examples.",
+                },
+                "AHT / FCR Understanding": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Explain how AHT, FCR, CSAT, reopen rate and escalation rate connect to process performance.",
+                },
+                "CRM Documentation": {
+                    "premium_score": 7.0,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Easy/Medium",
+                    "proof_required": "Prepare examples of clean ticket notes, tagging, follow-up ownership, and handover quality in CRM.",
+                },
+                "Quality Score Improvement": {
+                    "premium_score": 7.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Show how you used QA feedback to improve call/email/chat quality and reduce repeat errors.",
+                },
+                "Basic Excel / MIS": {
+                    "premium_score": 7.0,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Easy/Medium",
+                    "proof_required": "Create a simple tracker for volume, SLA, escalations, CSAT, quality score and weekly improvement actions.",
+                },
+            },
+            "MIS / WFM": {
+                "Advanced Excel": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Build reports using pivots, lookups, conditional formatting and clean data checks.",
+                },
+                "Power BI Dashboarding": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Create an operations dashboard showing volume, SLA, AHT, occupancy and trend insights.",
+                },
+                "Forecasting / Capacity Planning": {
+                    "premium_score": 7.5,
+                    "market_relevance": "Medium/High",
+                    "learning_difficulty": "Medium/Hard",
+                    "proof_required": "Prepare a simple staffing or volume forecast with assumptions and variance tracking.",
+                },
+            },
+            "Banking / KYC Operations": {
+                "KYC Documentation": {
+                    "premium_score": 7.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Prepare examples of document verification, discrepancy handling and checklist-based quality.",
+                },
+                "AML Basics": {
+                    "premium_score": 8.0,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Explain basic AML red flags, escalation process and risk checks with practical examples.",
+                },
+                "Compliance Process": {
+                    "premium_score": 7.5,
+                    "market_relevance": "High",
+                    "learning_difficulty": "Medium",
+                    "proof_required": "Document how compliance steps reduce operational risk and improve audit readiness.",
+                },
+            },
             "Data Analytics": {
                 "Python/Pandas": {
                     "premium_score": 8.0,

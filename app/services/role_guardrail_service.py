@@ -184,6 +184,7 @@ class RoleGuardrailService:
             ai_suggestions=self._normalize_list(ai_result.get("resume_suggestions")),
             target_roles=target_roles,
             top_skill_gaps=top_skill_gaps,
+            decision=decision,
         )
 
         summary_copy = self._maybe_override_direction_copy(
@@ -343,6 +344,7 @@ class RoleGuardrailService:
             if path_invalid:
                 continue
 
+            path_name = self._safe_text(path.get("path_name"), "Career Growth Path")
             path_roles = self._normalize_list(path.get("target_roles"))
             safe_path_roles = [
                 role for role in path_roles
@@ -350,9 +352,19 @@ class RoleGuardrailService:
                 or self._has_any(self._normalize_text(role), [allowed_role_text])
             ]
 
+            if self._looks_like_leadership_path(path_name):
+                leadership_roles = self._leadership_roles_for_path(
+                    target_roles=target_roles,
+                    stretch_roles=decision.stretch_target_roles,
+                    final_cluster=decision.final_role_cluster,
+                )
+                if leadership_roles:
+                    safe_path_roles = leadership_roles
+                    path_name = self._normalize_leadership_path_name(path_name)
+
             guarded_paths.append(
                 {
-                    "path_name": self._safe_text(path.get("path_name"), "Career Growth Path"),
+                    "path_name": path_name,
                     "fit_score": self._safe_text(path.get("fit_score"), "Medium"),
                     "why_it_fits": self._safe_text(
                         path.get("why_it_fits"),
@@ -370,6 +382,39 @@ class RoleGuardrailService:
             top_skill_gaps=top_skill_gaps,
             decision=decision,
         )
+
+    def _looks_like_leadership_path(self, path_name: str) -> bool:
+        text = self._normalize_text(path_name)
+        return any(word in text for word in ["leadership", "lead", "seniority", "manager"])
+
+    def _normalize_leadership_path_name(self, path_name: str) -> str:
+        text = self._normalize_text(path_name)
+        if "leadership" in text or "seniority" in text:
+            return "Seniority / Leadership Path"
+        return path_name
+
+    def _leadership_roles_for_path(
+        self,
+        target_roles: List[str],
+        stretch_roles: List[str],
+        final_cluster: str,
+    ) -> List[str]:
+        all_roles = self._dedupe_keep_order(target_roles + stretch_roles)
+        leadership_terms = ["senior", "lead", "manager", "architect", "head", "specialist"]
+        leadership_roles = [
+            role for role in all_roles
+            if any(term in self._normalize_text(role) for term in leadership_terms)
+        ]
+
+        if leadership_roles:
+            return leadership_roles[:3]
+
+        # Sensible fallback for QA profiles where AI says leadership but target roles
+        # are still individual contributor roles like Test Analyst.
+        if final_cluster in ["Testing/QA", "API Testing", "Automation Testing", "Manual Testing"]:
+            return ["Senior QA Engineer", "QA Lead", "Test Lead"]
+
+        return []
 
     def _build_default_growth_paths(
         self,
@@ -465,9 +510,34 @@ class RoleGuardrailService:
         ai_suggestions: List[str],
         target_roles: List[str],
         top_skill_gaps: List[str],
+        decision: RoleGuardrailDecision,
     ) -> List[str]:
         primary_role = target_roles[0] if target_roles else "target role"
         suggestions = self._dedupe_keep_order(ai_suggestions)
+
+        if decision.final_role_cluster == "Customer Support / BPO":
+            tech_metric_terms = [
+                "latency",
+                "defect reduction",
+                "automation saved",
+                "release ownership",
+                "production stability",
+                "architecture",
+                "microservice",
+                "backend",
+                "api performance",
+            ]
+            suggestions = [
+                suggestion
+                for suggestion in suggestions
+                if not any(term in suggestion.lower() for term in tech_metric_terms)
+            ]
+            defaults = [
+                f"Rewrite the resume summary for {primary_role} with process type, CRM/tools used, customer volume, escalation ownership and measurable service impact.",
+                "Add BPO/customer-support metrics wherever true: CSAT, QA score, AHT/FCR improvement, SLA adherence, escalation reduction, complaint resolution, retention impact, or ticket/call volume handled.",
+                f"Add proof around {self._format_phrase(top_skill_gaps[:2], 'priority skills')} using real customer scenarios, CRM notes, audit feedback, SLA examples, or escalation case studies.",
+            ]
+            return self._dedupe_keep_order(suggestions + defaults)[:5]
 
         defaults = [
             f"Rewrite the resume summary for {primary_role} with current role, strongest stack, ownership and measurable impact.",
@@ -556,24 +626,32 @@ class RoleGuardrailService:
         decision: RoleGuardrailDecision,
         rejected_roles: List[str],
     ) -> List[str]:
+        # Keep user-facing notes clean. Detailed correction history can stay in logs,
+        # but the UI should not show confusing interim mappings.
         notes = [
             (
-                f"Product guardrail: final role cluster is '{decision.final_role_cluster}' "
-                f"for experience band '{decision.experience_band}' using {decision.rule_source} career path rules."
+                f"Product guardrails validated the final role cluster as '{decision.final_role_cluster}' "
+                f"for experience band '{decision.experience_band}'."
             )
         ]
 
-        if decision.original_role_cluster != decision.final_role_cluster:
-            notes.append(
-                f"Role cluster was corrected from '{decision.original_role_cluster}' to '{decision.final_role_cluster}' because role/skill evidence was stronger."
-            )
-
         if rejected_roles:
             notes.append(
-                f"AI-suggested roles removed as weak-fit: {', '.join(rejected_roles)}."
+                f"Weak-fit AI suggestions were removed because the profile did not show enough evidence: {', '.join(rejected_roles)}."
             )
 
-        return self._dedupe_keep_order(notes + ai_notes)
+        safe_ai_notes = []
+        for note in ai_notes:
+            if not isinstance(note, str) or not note.strip():
+                continue
+            text = note.strip()
+            if "Role mapping:" in text and "Production Support" in text:
+                continue
+            if "Role cluster was corrected from" in text:
+                continue
+            safe_ai_notes.append(text)
+
+        return self._dedupe_keep_order(notes + safe_ai_notes)
 
     def _load_rules(self) -> List[RolePathRule]:
         if self._rules_cache is not None:
@@ -1103,6 +1181,29 @@ class RoleGuardrailService:
     def _is_skill_already_present(self, skill: str, profile: CareerProfileRequest) -> bool:
         text = self._profile_text(profile)
         normalized_skill = self._normalize_text(skill)
+
+        # Skill aliases should only skip genuine basics that are already present.
+        # Example: "Basic SQL" in profile means "SQL Basics" is not a gap,
+        # but "SQL Validation" can still be a valid next-level gap.
+        already_present_aliases = {
+            "sql basics": ["sql", "basic sql", "sql basics"],
+            "basic sql": ["sql", "basic sql", "sql basics"],
+            "linux basics": ["linux", "basic linux", "linux basics"],
+            "cloud fundamentals": ["cloud", "aws", "azure", "gcp"],
+            "api testing basics": ["api testing", "postman", "rest api", "rest apis"],
+        }
+
+        aliases = already_present_aliases.get(normalized_skill)
+        if aliases and self._has_any(text, aliases):
+            return True
+
+        # Do not skip advanced versions just because a base keyword exists.
+        advanced_markers = [
+            "validation", "optimization", "architecture", "framework", "strategy",
+            "leadership", "ownership", "automation", "observability", "decision"
+        ]
+        if any(marker in normalized_skill for marker in advanced_markers):
+            return False
 
         # Only skip when a clear core term is already present. Composite skills
         # like "AWS / Cloud Deployment" are treated as missing unless a clear
